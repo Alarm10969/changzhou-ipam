@@ -29,6 +29,9 @@ if command -v -- ping >/dev/null 2>&1; then
   PING=$(ping -c 1 -W 1 127.0.0.1 2>&1); CODE=$?
   [ $CODE -eq 0 ] && record PASS PING "$PING" || record WARN PING "exit=$CODE; $PING"
 else record WARN PING "未找到 ping；后续阶段不能把此情形当作 IP 不通"; fi
-if command -v -- ss >/dev/null 2>&1; then record INFO "LISTEN_PORT_$PORT" "$(ss -ltn 2>/dev/null | awk -v port=":$PORT" '$4 ~ (port "$") {print $0}' | tr '\n' ';')"; else record WARN "LISTEN_PORT_$PORT" "未找到 ss，未检测端口"; fi
+if command -v -- ss >/dev/null 2>&1; then
+  LISTENERS=$(ss -ltn 2>/dev/null | awk -v port=":$PORT" '$4 ~ (port "$") {print $0}' | tr '\n' ';')
+  if [ -n "$LISTENERS" ]; then record FAIL "PORT_AVAILABLE_$PORT" "端口已被占用: $LISTENERS"; else record PASS "PORT_AVAILABLE_$PORT" "未发现监听进程"; fi
+else record WARN "PORT_AVAILABLE_$PORT" "未找到 ss，未检测端口"; fi
 record INFO SUMMARY "PASS=$PASS WARN=$WARN FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
