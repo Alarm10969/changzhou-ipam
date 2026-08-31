@@ -6,6 +6,7 @@ APP_JAR=${IPAM_JAR:-"$BASE_DIR/ipam-stage1.jar"}
 LIB_DIR=${IPAM_LIB_DIR:-"$BASE_DIR/lib"}
 DATA_DIR=${IPAM_DATA_DIR:-"$BASE_DIR/data"}
 REPORT=${1:-"$BASE_DIR/kylin-stage1-report-$(date +%Y%m%d-%H%M%S).txt"}
+PORT=${IPAM_PORT:-18080}
 PASS=0; WARN=0; FAIL=0
 record() { status=$1; key=$2; shift 2; value=$*; printf '%s|%s|%s\n' "$status" "$key" "$value" | tee -a "$REPORT"; case "$status" in PASS) PASS=$((PASS+1));; WARN) WARN=$((WARN+1));; FAIL|ERROR) FAIL=$((FAIL+1));; esac; }
 command_line() { if command -v -- "$1" >/dev/null 2>&1; then "$@" 2>&1 | head -n 1; else printf 'NOT_FOUND'; fi; }
@@ -28,6 +29,6 @@ if command -v -- ping >/dev/null 2>&1; then
   PING=$(ping -c 1 -W 1 127.0.0.1 2>&1); CODE=$?
   [ $CODE -eq 0 ] && record PASS PING "$PING" || record WARN PING "exit=$CODE; $PING"
 else record WARN PING "未找到 ping；后续阶段不能把此情形当作 IP 不通"; fi
-if command -v -- ss >/dev/null 2>&1; then record INFO LISTEN_PORT_8080 "$(ss -ltn 2>/dev/null | awk '$4 ~ /:8080$/ {print $0}' | tr '\n' ';')"; else record WARN LISTEN_PORT_8080 "未找到 ss，未检测端口"; fi
+if command -v -- ss >/dev/null 2>&1; then record INFO "LISTEN_PORT_$PORT" "$(ss -ltn 2>/dev/null | awk -v port=":$PORT" '$4 ~ (port "$") {print $0}' | tr '\n' ';')"; else record WARN "LISTEN_PORT_$PORT" "未找到 ss，未检测端口"; fi
 record INFO SUMMARY "PASS=$PASS WARN=$WARN FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

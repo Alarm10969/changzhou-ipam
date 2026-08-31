@@ -40,7 +40,7 @@ public final class IpamApplication {
     Database db = new Database(data.resolve("ipam.db"));
     db.migrate(); db.bootstrapAdmin(System.getenv("IPAM_ADMIN_USERNAME"), System.getenv("IPAM_ADMIN_PASSWORD"));
     Path staticDir = Paths.get(env("IPAM_STATIC_DIR", "frontend/dist")).toAbsolutePath().normalize();
-    int port = Integer.parseInt(env("IPAM_PORT", "8080"));
+    int port = Integer.parseInt(env("IPAM_PORT", "18080"));
     HttpServer server = HttpServer.create(new InetSocketAddress(env("IPAM_BIND", "127.0.0.1"), port), 64);
     server.createContext("/", new IpamApplication(db, staticDir, Boolean.parseBoolean(env("IPAM_SECURE_COOKIE", "false")))::handle);
     server.setExecutor(Executors.newFixedThreadPool(12)); server.start();

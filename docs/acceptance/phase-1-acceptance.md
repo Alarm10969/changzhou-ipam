@@ -17,6 +17,8 @@ chmod +x deploy/check-kylin-arm64.sh deploy/verify-package.sh deploy/backup-rest
 IPAM_DATA_DIR=/home/部署账号/ipam-data ./deploy/check-kylin-arm64.sh
 ```
 
+默认应用端口为 `18080`；如行内另行分配端口，预检和启动时均设置相同的 `IPAM_PORT`。
+
 把生成的 `kylin-stage1-report-*.txt` 原样回传。脚本一次检查架构、Java 11、发布包、运行期不依赖 Maven/Node/Nginx/MySQL、数据目录可写及文件系统、SQLite JDBC 原生库加载/WAL/真实读写/备份恢复、ping 和监听端口。`WARN` 需要人工判断；`FAIL` 不允许进入下一阶段。
 
 ## 会话规则
