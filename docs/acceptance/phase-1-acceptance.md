@@ -27,6 +27,8 @@ IPAM_PORT=18080 IPAM_DATA_DIR=/data/项目/IP管理系统/data ./deploy/start-st
 
 启动成功后，以 `http://麒麟服务器IP:18080/` 打开页面：管理员首次登录并改密，依次创建支行、网点、科技管理员和绑定的 B 角；科技管理员与 B 角分别首次登录并改密。两类普通角色均不得显示管理菜单，且直接访问 `/api/v1/admin/users` 应返回 `403`。管理员禁用账号、重置密码以及用户自助改密后，原登录页面刷新均应提示会话失效。验收结束可用 `./deploy/stop-stage1.sh` 停止服务。
 
+忘记唯一管理员密码时，不得删除 `ipam.db`。停止服务后使用 `./deploy/recover-admin.sh`：该脚本只重置管理员密码、撤销其会话并记录恢复审计。
+
 把生成的 `kylin-stage1-report-*.txt` 原样回传。脚本一次检查架构、Java 11、发布包、运行期不依赖 Maven/Node/Nginx/MySQL、数据目录可写及文件系统、SQLite JDBC 原生库加载/WAL/真实读写/备份恢复、ping 和监听端口。`WARN` 需要人工判断；`FAIL` 不允许进入下一阶段。
 
 ## 会话规则
