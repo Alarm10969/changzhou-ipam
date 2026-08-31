@@ -6,5 +6,6 @@ backend/*.db
 frontend/dist/
 release/
 deliverables/
+kylin-stage1-report-*.txt
 .idea/
 *.log

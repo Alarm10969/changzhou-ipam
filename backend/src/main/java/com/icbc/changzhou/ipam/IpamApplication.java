@@ -38,7 +38,7 @@ public final class IpamApplication {
     Files.createDirectories(data);
     if (!Files.isWritable(data)) throw new IllegalStateException("数据目录不可写: " + data);
     Database db = new Database(data.resolve("ipam.db"));
-    db.migrate(); db.bootstrapAdmin(System.getenv("IPAM_ADMIN_USERNAME"), System.getenv("IPAM_ADMIN_PASSWORD"));
+    db.migrate(); db.bootstrapAdmin(System.getenv("IPAM_ADMIN_USERNAME"), bootstrapPassword());
     Path staticDir = Paths.get(env("IPAM_STATIC_DIR", "frontend/dist")).toAbsolutePath().normalize();
     int port = Integer.parseInt(env("IPAM_PORT", "18080"));
     HttpServer server = HttpServer.create(new InetSocketAddress(env("IPAM_BIND", "127.0.0.1"), port), 64);
@@ -142,6 +142,13 @@ public final class IpamApplication {
   private static Map<String,Object> error(String c,String m,String r){return map("code",c,"message",m,"requestId",r);}
   private static Map<String,Object> map(Object...v){Map<String,Object> m=new LinkedHashMap<>();for(int i=0;i<v.length;i+=2)m.put(String.valueOf(v[i]),v[i+1]);return m;}
   private static String env(String k,String d){String v=System.getenv(k);return v==null||v.trim().isEmpty()?d:v.trim();}
+  private static String bootstrapPassword() throws IOException {
+    String file=System.getenv("IPAM_ADMIN_PASSWORD_FILE");
+    if(file==null||file.trim().isEmpty()) return System.getenv("IPAM_ADMIN_PASSWORD");
+    Path path=Paths.get(file).toAbsolutePath().normalize();
+    try { return Files.readString(path,StandardCharsets.UTF_8).trim(); }
+    finally { Files.deleteIfExists(path); }
+  }
   private static String random(){byte[] b=new byte[32];RANDOM.nextBytes(b);return Base64.getUrlEncoder().withoutPadding().encodeToString(b);}
   private static String hash(String s){try{byte[] h=MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8));StringBuilder b=new StringBuilder();for(byte x:h)b.append(String.format("%02x",x));return b.toString();}catch(Exception e){throw new IllegalStateException(e);}}
   private static boolean constantEquals(String a,String b){return MessageDigest.isEqual(a.getBytes(StandardCharsets.US_ASCII),b.getBytes(StandardCharsets.US_ASCII));}

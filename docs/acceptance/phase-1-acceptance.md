@@ -19,6 +19,14 @@ IPAM_DATA_DIR=/home/部署账号/ipam-data ./deploy/check-kylin-arm64.sh
 
 默认应用端口为 `18080`；如行内另行分配端口，预检和启动时均设置相同的 `IPAM_PORT`。
 
+## 麟机功能验收
+
+```sh
+IPAM_PORT=18080 IPAM_DATA_DIR=/data/项目/IP管理系统/data ./deploy/start-stage1.sh
+```
+
+启动成功后，以 `http://麒麟服务器IP:18080/` 打开页面：管理员首次登录并改密，依次创建支行、网点、科技管理员和绑定的 B 角；科技管理员与 B 角分别首次登录并改密。两类普通角色均不得显示管理菜单，且直接访问 `/api/v1/admin/users` 应返回 `403`。管理员禁用账号、重置密码以及用户自助改密后，原登录页面刷新均应提示会话失效。验收结束可用 `./deploy/stop-stage1.sh` 停止服务。
+
 把生成的 `kylin-stage1-report-*.txt` 原样回传。脚本一次检查架构、Java 11、发布包、运行期不依赖 Maven/Node/Nginx/MySQL、数据目录可写及文件系统、SQLite JDBC 原生库加载/WAL/真实读写/备份恢复、ping 和监听端口。`WARN` 需要人工判断；`FAIL` 不允许进入下一阶段。
 
 ## 会话规则

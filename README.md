@@ -29,6 +29,8 @@ $env:IPAM_ADMIN_PASSWORD = 'ChangeMe_2026!'
 
 在 Windows 构建机运行 `./scripts/package-kylin.ps1`，将生成的 ZIP 整包复制到麒麟机普通用户目录后解压。ZIP 内部即为一个完整发布根目录，包含 JAR、`lib`、前端、依赖校验清单和 `deploy` 脚本；不需要复制 `backend`、`frontend` 源码，也不需要在目标机安装构建工具。
 
+在麒麟机用 `./deploy/start-stage1.sh` 启动。脚本会隐藏输入初始管理员密码，将其写入权限为 600 的一次性文件，应用读取后立即删除；不会把口令放进长期运行进程的环境变量。
+
 ## 安全操作边界
 
 - 会话原始令牌仅保存在 `HttpOnly` Cookie；数据库只保存 SHA-256 摘要。
