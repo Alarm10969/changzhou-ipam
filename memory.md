@@ -1,0 +1,71 @@
+# 项目开发记忆
+
+> 开发或修改前必须先阅读本文件。事实可能随环境变化，涉及版本和实机状态时应重新验证。
+
+## 2026-08-31：规划基线
+
+- 当前目录开始时只有需求文档，尚未初始化 Git；不得把后续未提交文件当成已建立的正式基线。
+- 目标环境证据来自 `D:\CODE\Projects\notes\mailsmanager-env-report.txt`：Kylin V10 SP1、aarch64、Java 11.0.19、Python 3.8.2、无 Node.js、无 Nginx。
+- 行内交付遵循普通用户权限、离线构建、区分开发机测试与麒麟/IE11实机验收的原则。
+- 用户确认规模最多约30人，同意使用 SQLite。固定边界为单机单应用实例、本地磁盘、WAL、短写事务、应用内写入排队、`busy_timeout`、外键开启和在线备份；未来多实例或高写并发再迁移数据库服务。
+- 科技管理员和B角可以在验证当前密码后自助改密；管理员仍可重置密码。管理员手动选 IP 使用可搜索、可分页的单选表格弹窗，不使用超长下拉框。
+
+### Bug：`mvn` 和 `mysql` 均提示“未找到命令”
+
+- 现象：用户在目标机执行两个版本命令，Shell 均提示未找到命令。
+- 原因：已确认的是当前 Shell 无法解析这两个可执行程序；究竟未安装还是未加入 PATH 未进一步区分。原设计不应把它们作为目标机启动前提。
+- 解决：数据库改用随应用发布的 SQLite JDBC；JAR 和前端在 Windows 构建机离线构建。麒麟目标机只需现有 Java 11，不要求安装 Maven、MySQL 客户端或 MySQL 服务。开发前改做 SQLite JDBC Linux ARM64 加载/读写烟测，并确认原生库临时目录和数据目录可写。
+
+### Bug：需求文档中的 `check_env.sh` 版本检测写法错误
+
+- 现象：函数中写成 `$(($1 --version 2>/dev/null || echo 'unknown'))`，Shell 会把内容当成算术展开，不能正确执行命令。
+- 原因：命令替换 `$()` 被误写成算术展开 `$(( ))`。
+- 解决：实现脚本时改为安全的命令分支和命令替换，例如先用 `command -v -- "$1"` 判断，再执行 `"$1" --version 2>&1 | head -n 1`；变量必须加引号。不要直接复制需求文档中的错误脚本。
+
+### Bug：Windows 提取 DOCX 中文时终端显示乱码
+
+- 现象：`python-docx` 提取出的中文在 PowerShell 工具输出中显示为乱码。
+- 原因：Python 标准输出编码与终端解码不一致，不是 DOCX 内容损坏。
+- 解决：读取前设置 `PYTHONIOENCODING=utf-8`，并将 PowerShell `Console.OutputEncoding` 设为 UTF-8；重新提取后中文正常。
+
+### Bug：PowerShell 内联验证命令破坏 Markdown 反引号
+
+- 现象：用于提取 SQL 代码块的 Python 正则在 PowerShell 双引号参数中被截断，Python 报 `SyntaxError`，未执行到 SQL。
+- 原因：PowerShell 会先解释双引号字符串中的反引号，Markdown 三反引号不能原样传给 Python。
+- 解决：不要在 PowerShell 双引号内嵌三反引号；改用不含反引号的内容边界（例如从首个 `CREATE TABLE` 定位），或把 Python 参数放入 PowerShell 单引号字符串。只有 Python 进程退出码为0并返回表/索引检查结果时才能声称 SQL 已验证。
+
+### Bug：迁移执行方法的事务 `catch` 未与 `try` 配对
+
+- 现象：首次编译第一阶段后端时，`IpamApplication.java` 的迁移方法在 `catch` 处报“非法类型开始/需要分号”。
+- 原因：把多个短 `try-with-resources` 压成一行时，事务处理的 `catch` 没有对应的外层 `try`；同时整段 SQL 不能依赖 JDBC 驱动一定接受多语句。
+- 解决：把事务改为结构化的 `try/catch/finally`，并按分号加换行分割迁移中的独立 DDL/INSERT，再在同一事务写入 `schema_history`。以后修改迁移执行器后必须先运行 `scripts/test-stage1.ps1`。
+
+### Bug：发布 JAR 未包含无框架烟测类
+
+- 现象：编译主代码并打包成功后，`scripts/test-stage1.ps1` 执行 `StageOneSmokeTest` 报 `ClassNotFoundException`。
+- 原因：发布脚本只收集了 `src/main/java`，而部署前麒麟门禁也需要运行 `src/test/java` 中不依赖 JUnit 的 SQLite 烟测类。
+- 解决：发布脚本在编译主代码后，额外以主 classes 为 classpath 编译无框架烟测类并放入发布 JAR。以后任何由部署脚本调用的 Java 验证类，必须由发布脚本显式打包。
+
+### Bug：首个迁移重复创建迁移历史表
+
+- 现象：临时实例启动时，SQLite 报 `table schema_history already exists`，无法执行首次迁移。
+- 原因：迁移器为能判断迁移版本而预先创建了 `schema_history`，而 V001 又使用非幂等 DDL 再次创建同一张表。
+- 解决：迁移历史表只由迁移器的 `CREATE TABLE IF NOT EXISTS` 建立；V001 仅包含业务表。修复后须在全新数据目录启动，并验证写入 V001 历史记录。
+
+### Bug：API 路径截取少移除了一个字符
+
+- 现象：`GET /api/v1/health` 被识别为需要登录，而非公开健康检查；其余 API 也会因路径带有额外 `/` 而无法命中路由。
+- 原因：`/api/v1/` 前缀长度为 8，路由器误用 `substring(7)`。
+- 解决：改为 `substring(8)`，并在临时实例启动后先调用公开 `health`，再开始账号接口验收。
+
+### Bug：初始/重置密码未真正限制业务访问
+
+- 现象：账号响应中虽标记 `mustChangePassword=true`，但已登录的管理员仍可调用管理接口。
+- 原因：后端只把标志返回给前端，没有在 API 鉴权后强制限制业务路由，前端限制可被直接请求绕过。
+- 解决：认证后仅放行 `me`、退出和改密接口；其他 API 返回 `PASSWORD_CHANGE_REQUIRED`。以后验收必须覆盖“初始密码登录后不能直接使用业务接口”。
+
+### Bug：禁用科技管理员没有使其 B 角会话立即失效
+
+- 现象：B角在科技管理员被禁用后，理论上仍可能继续使用已经建立的会话。
+- 原因：原会话查询只检查 B角自己的启用标识，禁用逻辑也只撤销指定用户的会话。
+- 解决：登录与会话查询都要求 B角的绑定科技管理员处于启用状态；禁用科技管理员时同时撤销其 B角会话。以后账号验收须覆盖这一继承权限的失效链。

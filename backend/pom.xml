@@ -1,0 +1,11 @@
+<!-- Dependency manifest for governance/SCA. Build and target runtime use the checked-in jars and scripts, not Maven. -->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion><groupId>com.icbc.changzhou</groupId><artifactId>ipam</artifactId><version>0.1.0</version>
+  <properties><maven.compiler.release>11</maven.compiler.release><sqlite-jdbc.version>3.53.1.0</sqlite-jdbc.version><gson.version>2.10.1</gson.version><jbcrypt.version>0.4</jbcrypt.version><slf4j.version>2.0.17</slf4j.version></properties>
+  <dependencies>
+    <dependency><groupId>org.xerial</groupId><artifactId>sqlite-jdbc</artifactId><version>${sqlite-jdbc.version}</version></dependency>
+    <dependency><groupId>com.google.code.gson</groupId><artifactId>gson</artifactId><version>${gson.version}</version></dependency>
+    <dependency><groupId>org.mindrot</groupId><artifactId>jbcrypt</artifactId><version>${jbcrypt.version}</version></dependency>
+    <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-nop</artifactId><version>${slf4j.version}</version></dependency>
+  </dependencies>
+</project>

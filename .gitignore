@@ -1,0 +1,9 @@
+# Build and runtime material (never commit credentials or live SQLite files)
+backend/out/
+backend/data/
+backend/integration-data-*/
+backend/*.db
+frontend/dist/
+release/
+.idea/
+*.log
