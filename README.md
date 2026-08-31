@@ -25,6 +25,10 @@ $env:IPAM_ADMIN_PASSWORD = 'ChangeMe_2026!'
 - `deploy/backup-restore.sh`：停止服务后的备份恢复操作封装。
 - `docs/acceptance/phase-1-acceptance.md`：第一阶段验收清单与证据边界。
 
+## 复制到麒麟机
+
+在 Windows 构建机运行 `./scripts/package-kylin.ps1`，将生成的 ZIP 整包复制到麒麟机普通用户目录后解压。ZIP 内部即为一个完整发布根目录，包含 JAR、`lib`、前端、依赖校验清单和 `deploy` 脚本；不需要复制 `backend`、`frontend` 源码，也不需要在目标机安装构建工具。
+
 ## 安全操作边界
 
 - 会话原始令牌仅保存在 `HttpOnly` Cookie；数据库只保存 SHA-256 摘要。

@@ -24,9 +24,11 @@ if ($testJavaFiles.Count -gt 0) {
 Copy-Item (Join-Path $backend 'src\main\resources\*') $classes -Recurse -Force
 Copy-Item (Join-Path $backend 'lib\*') (Join-Path $OutputDirectory 'lib') -Force
 Copy-Item (Join-Path $projectRoot 'frontend\*') (Join-Path $OutputDirectory 'frontend') -Recurse -Force
+Copy-Item (Join-Path $projectRoot 'deploy') (Join-Path $OutputDirectory 'deploy') -Recurse -Force
+Copy-Item (Join-Path $backend 'dependencies.sha256') (Join-Path $OutputDirectory 'dependencies.sha256') -Force
 $manifest=Join-Path $OutputDirectory 'MANIFEST.MF'; "Main-Class: com.icbc.changzhou.ipam.IpamApplication`r`nClass-Path: lib/sqlite-jdbc-3.53.1.0.jar lib/gson-2.10.1.jar lib/jbcrypt-0.4.jar lib/slf4j-api-2.0.17.jar lib/slf4j-nop-2.0.17.jar`r`n" | Set-Content -LiteralPath $manifest -Encoding ascii
 & jar cfm (Join-Path $OutputDirectory 'ipam-stage1.jar') $manifest -C $classes .
 if ($LASTEXITCODE -ne 0) { throw 'JAR 打包失败。' }
 Remove-Item -LiteralPath $manifest -Force
 Get-FileHash (Join-Path $OutputDirectory 'ipam-stage1.jar') -Algorithm SHA256 | Format-List
-Write-Output "已生成第一阶段发布目录: $OutputDirectory"
+Write-Output "已生成可直接复制到麒麟机的第一阶段发布目录: $OutputDirectory"

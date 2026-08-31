@@ -5,5 +5,6 @@ backend/integration-data-*/
 backend/*.db
 frontend/dist/
 release/
+deliverables/
 .idea/
 *.log
