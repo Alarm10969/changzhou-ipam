@@ -26,10 +26,10 @@ public final class StageOneSmokeTest {
       s.execute("INSERT INTO sys_user(id,username,password_hash,real_name,role,is_active,must_change_password,failed_login_count) VALUES(1,'admin','"+BCrypt.hashpw("OldPassword2026",BCrypt.gensalt(4))+"','管理员','ADMIN',0,0,5)");
       s.execute("INSERT INTO sys_session(id,user_id) VALUES(1,1)");
     }
-    Files.writeString(passwordFile,"Recovered2026",java.nio.charset.StandardCharsets.UTF_8);
+    Files.writeString(passwordFile,"123456",java.nio.charset.StandardCharsets.UTF_8);
     DatabaseTool.resetAdmin(recoveryDb,passwordFile,"ignored");
     if(Files.exists(passwordFile))throw new AssertionError("恢复口令文件未删除");
-    try(Connection c=DriverManager.getConnection("jdbc:sqlite:"+recoveryDb);Statement s=c.createStatement();ResultSet r=s.executeQuery("SELECT password_hash,is_active,must_change_password,failed_login_count,locked_until FROM sys_user WHERE id=1")){if(!r.next()||!BCrypt.checkpw("Recovered2026",r.getString(1))||r.getInt(2)!=1||r.getInt(3)!=1||r.getInt(4)!=0||r.getString(5)!=null)throw new AssertionError("管理员恢复状态错误");}
+    try(Connection c=DriverManager.getConnection("jdbc:sqlite:"+recoveryDb);Statement s=c.createStatement();ResultSet r=s.executeQuery("SELECT password_hash,is_active,must_change_password,failed_login_count,locked_until FROM sys_user WHERE id=1")){if(!r.next()||!BCrypt.checkpw("123456",r.getString(1))||r.getInt(2)!=1||r.getInt(3)!=1||r.getInt(4)!=0||r.getString(5)!=null)throw new AssertionError("管理员恢复状态错误");}
     try(Connection c=DriverManager.getConnection("jdbc:sqlite:"+recoveryDb);Statement s=c.createStatement();ResultSet r=s.executeQuery("SELECT revoked_at FROM sys_session WHERE id=1")){if(!r.next()||r.getString(1)==null)throw new AssertionError("管理员恢复未撤销会话");}
     System.out.println("PASS|ADMIN_RECOVERY_SMOKE|"+recoveryDb);
     System.out.println("PASS|STAGE1_SQLITE_SMOKE|"+work);
