@@ -1,3 +1,3 @@
-3.0.0-immediate-release-export
+3.0.1-immediate-release-export-hotfix
 Build target: Kylin ARM64 / Java 11
 Data schema: V001-V007 (immediate release, notification, statistics and export)
