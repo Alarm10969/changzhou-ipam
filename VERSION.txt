@@ -1,3 +1,3 @@
-3.0.1-immediate-release-export-hotfix
+3.1.0-outlet-directory-filter-export-fields
 Build target: Kylin ARM64 / Java 11
-Data schema: V001-V007 (immediate release, notification, statistics and export)
+Data schema: V001-V008 (outlet directory, filters and selectable export fields)
