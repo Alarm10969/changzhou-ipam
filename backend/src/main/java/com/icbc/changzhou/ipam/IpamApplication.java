@@ -115,6 +115,7 @@ public final class IpamApplication {
     if ("applications".equals(path) && "GET".equals(m)) { respond(x,200,map("items",phaseTwo.applications(query(x,"status"),query(x,"branchId"),query(x,"outletId"),query(x,"q")))); return; }
     if (path.matches("applications/\\d+/reject") && "POST".equals(m)) { phaseTwo.reject(parseId(path),p.id,required(body(x),"reason",500)); audit(p,requestId,"REJECT_APPLICATION","APPLICATION",String.valueOf(parseId(path)),"SUCCESS",null); respond(x,204,null); return; }
     if (path.matches("applications/\\d+/approve") && "POST".equals(m)) { JsonObject b=body(x); phaseTwo.approve(parseId(path),number(b,"poolId"),p.id); audit(p,requestId,"APPROVE_APPLICATION","APPLICATION",String.valueOf(parseId(path)),"SUCCESS",null); respond(x,204,null); return; }
+    if (path.matches("assignments/\\d+/release") && "POST".equals(m)) { JsonObject b=body(x); respond(x,200,phaseThree.forceRelease(parseId(path),p.id,optional(b,"reason",500),requestId)); return; }
     if ("available-ips".equals(path) && "GET".equals(m)) { long applicationId=Long.parseLong(query(x,"applicationId")); int page=parsePage(query(x,"page")); respond(x,200,phaseTwo.availableIpPage(applicationId,query(x,"q"),page)); return; }
     if (path.matches("import-templates/(OUTLET|IP_RANGE|IP_POOL)\\.(csv|xlsx)") && "GET".equals(m)) { String[] a=path.substring("import-templates/".length()).split("\\."); binary(x,200,phaseTwo.template(a[0],a[1].equals("csv")?"CSV":"XLSX"),a[1].equals("csv")?"text/csv; charset=utf-8":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","attachment; filename=ipam-"+a[0].toLowerCase()+"."+a[1]); return; }
     if (path.matches("imports/(OUTLET|IP_RANGE|IP_POOL)") && "POST".equals(m)) { Upload u=upload(x); respond(x,201,phaseTwo.preview(path.substring(8),u.fileName,u.bytes,p.id)); return; }
@@ -144,6 +145,7 @@ public final class IpamApplication {
     if ("ip-pool".equals(path) && "POST".equals(m)) { throw new ApiError(409,"IP_POOL_AUTOMATIC","IP 资源池由网点绑定地址段后自动生成，请直接维护具体 IP 的可用状态。"); }
     if ("ip-pool/status".equals(path) && "PUT".equals(m)) { int count=phaseTwo.updatePoolBatch(body(x),p.id); respond(x,200,map("updated",count)); return; }
     if (path.matches("ip-pool/\\d+") && "PUT".equals(m)) { updatePool(x,p,requestId,parseId(path)); return; }
+    if (path.matches("ip-pool/\\d+/reachability") && "GET".equals(m)) { respond(x,200,phaseThree.reachability(parseId(path))); return; }
     if ("audit".equals(path) && "GET".equals(m)) { respond(x,200,map("items",db.rows("SELECT a.id,a.action,a.target_type AS targetType,a.target_id AS targetId,a.result,a.created_at AS createdAt,u.username AS actor FROM audit_log a LEFT JOIN sys_user u ON u.id=a.actor_user_id ORDER BY a.id DESC LIMIT 200"))); return; }
     throw new ApiError(404,"NOT_FOUND","管理接口不存在。");
   }
