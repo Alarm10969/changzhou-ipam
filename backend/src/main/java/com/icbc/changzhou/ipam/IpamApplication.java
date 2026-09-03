@@ -141,7 +141,7 @@ public final class IpamApplication {
     if ("ip-ranges".equals(path) && "GET".equals(m)) { respond(x,200,map("items",phaseTwo.ranges())); return; }
     if ("ip-ranges".equals(path) && "POST".equals(m)) { long id=phaseTwo.createRange(body(x),p.id); respond(x,201,map("id",id)); return; }
     if (path.matches("ip-ranges/\\d+") && "PUT".equals(m)) { phaseTwo.updateRange(parseId(path),body(x),p.id); respond(x,204,null); return; }
-    if ("ip-pool".equals(path) && "GET".equals(m)) { String range=query(x,"rangeId"); long rangeId;try{rangeId=Long.parseLong(range==null?"0":range);}catch(Exception e){throw new ApiError(400,"VALIDATION_ERROR","地址段编号不正确。");} respond(x,200,phaseTwo.poolItems(rangeId,query(x,"q"),parsePage(query(x,"page")))); return; }
+    if ("ip-pool".equals(path) && "GET".equals(m)) { respond(x,200,phaseTwo.poolItems(optionalQueryId(query(x,"branchId"),"支行"),optionalQueryId(query(x,"outletId"),"网点"),query(x,"q"),parsePage(query(x,"page")))); return; }
     if ("ip-pool".equals(path) && "POST".equals(m)) { throw new ApiError(409,"IP_POOL_AUTOMATIC","IP 资源池由网点绑定地址段后自动生成，请直接维护具体 IP 的可用状态。"); }
     if ("ip-pool/status".equals(path) && "PUT".equals(m)) { int count=phaseTwo.updatePoolBatch(body(x),p.id); respond(x,200,map("updated",count)); return; }
     if (path.matches("ip-pool/\\d+") && "PUT".equals(m)) { updatePool(x,p,requestId,parseId(path)); return; }
@@ -170,6 +170,7 @@ public final class IpamApplication {
   private static long number(JsonObject b,String key){try{return b.get(key).getAsLong();}catch(Exception e){throw new ApiError(400,"VALIDATION_ERROR",key+" 必须是有效编号。");}}
   private static boolean bool(JsonObject b,String key){try{return b.get(key).getAsBoolean();}catch(Exception e){throw new ApiError(400,"VALIDATION_ERROR",key+" 必须是布尔值。");}}
   private static int parsePage(String value){try{return value==null?1:Math.max(1,Integer.parseInt(value));}catch(Exception e){throw new ApiError(400,"VALIDATION_ERROR","页码不正确。");}}
+  private static Long optionalQueryId(String value,String label){if(value==null||value.trim().isEmpty())return null;try{long id=Long.parseLong(value);if(id<=0)throw new NumberFormatException();return Long.valueOf(id);}catch(Exception e){throw new ApiError(400,"VALIDATION_ERROR",label+"编号不正确。");}}
   private static String query(HttpExchange x,String name){String q=x.getRequestURI().getRawQuery();if(q==null)return null;for(String item:q.split("&")){String[] a=item.split("=",2);if(a.length>0&&name.equals(a[0]))try{return java.net.URLDecoder.decode(a.length==2?a[1]:"", "UTF-8");}catch(Exception e){throw new ApiError(400,"VALIDATION_ERROR","查询参数不正确。");}}return null;}
   private static long parseId(String path){String[] a=path.split("/");return Long.parseLong(a[1]);}
   private static void validatePassword(String v){if(v.length()<6||v.length()>72)throw new ApiError(400,"PASSWORD_POLICY","密码长度须为 6–72 位。");}
