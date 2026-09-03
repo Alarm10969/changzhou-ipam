@@ -20,10 +20,10 @@ public final class StageOneSmokeTest {
     try(Connection c=DriverManager.getConnection("jdbc:sqlite:"+db);Statement s=c.createStatement();ResultSet r=s.executeQuery("SELECT value FROM smoke")){if(!r.next()||!"arm64-jdbc-read-write".equals(r.getString(1)))throw new AssertionError("备份恢复失败");}
     Path recoveryDb=work.resolve("recovery.db"), passwordFile=work.resolve("one-time-password");
     try(Connection c=DriverManager.getConnection("jdbc:sqlite:"+recoveryDb);Statement s=c.createStatement()){
-      s.execute("CREATE TABLE sys_user(id INTEGER PRIMARY KEY,username TEXT,password_hash TEXT,real_name TEXT,role TEXT,is_active INTEGER,must_change_password INTEGER,failed_login_count INTEGER,locked_until TEXT,password_changed_at TEXT,updated_at TEXT)");
+      s.execute("CREATE TABLE sys_user(id INTEGER PRIMARY KEY,username TEXT,password_hash TEXT,real_name TEXT,role TEXT,is_active INTEGER,is_initial_admin INTEGER,deleted_at TEXT,must_change_password INTEGER,failed_login_count INTEGER,locked_until TEXT,password_changed_at TEXT,updated_at TEXT)");
       s.execute("CREATE TABLE sys_session(id INTEGER PRIMARY KEY,user_id INTEGER,revoked_at TEXT)");
       s.execute("CREATE TABLE audit_log(id INTEGER PRIMARY KEY,action TEXT,target_type TEXT,target_id TEXT,result TEXT,detail_json TEXT)");
-      s.execute("INSERT INTO sys_user(id,username,password_hash,real_name,role,is_active,must_change_password,failed_login_count) VALUES(1,'admin','"+BCrypt.hashpw("OldPassword2026",BCrypt.gensalt(4))+"','管理员','ADMIN',0,0,5)");
+      s.execute("INSERT INTO sys_user(id,username,password_hash,real_name,role,is_active,is_initial_admin,must_change_password,failed_login_count) VALUES(1,'admin','"+BCrypt.hashpw("OldPassword2026",BCrypt.gensalt(4))+"','管理员','ADMIN',1,1,0,5)");
       s.execute("INSERT INTO sys_session(id,user_id) VALUES(1,1)");
     }
     Files.writeString(passwordFile,"123456",java.nio.charset.StandardCharsets.UTF_8);

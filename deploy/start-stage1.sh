@@ -2,7 +2,7 @@
 # 首次/常规启动：默认绑定内网全部网卡的 18080 端口，不依赖 systemd、Maven、Node 或 Nginx。
 set -eu
 BASE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-APP_JAR=${IPAM_JAR:-"$BASE_DIR/ipam-stage1.jar"}
+APP_JAR=${IPAM_JAR:-"$BASE_DIR/ipam-stage2.jar"}
 DATA_DIR=${IPAM_DATA_DIR:-"$BASE_DIR/data"}
 PORT=${IPAM_PORT:-18080}
 BIND=${IPAM_BIND:-0.0.0.0}

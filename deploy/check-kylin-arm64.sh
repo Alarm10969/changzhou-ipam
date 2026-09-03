@@ -2,10 +2,10 @@
 # 一次性只读/临时麒麟 ARM64 门禁。不会安装软件、修改系统配置或启动正式服务。
 set -u
 BASE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-APP_JAR=${IPAM_JAR:-"$BASE_DIR/ipam-stage1.jar"}
+APP_JAR=${IPAM_JAR:-"$BASE_DIR/ipam-stage2.jar"}
 LIB_DIR=${IPAM_LIB_DIR:-"$BASE_DIR/lib"}
 DATA_DIR=${IPAM_DATA_DIR:-"$BASE_DIR/data"}
-REPORT=${1:-"$BASE_DIR/kylin-stage1-report-$(date +%Y%m%d-%H%M%S).txt"}
+REPORT=${1:-"$BASE_DIR/kylin-stage2-report-$(date +%Y%m%d-%H%M%S).txt"}
 PORT=${IPAM_PORT:-18080}
 PASS=0; WARN=0; FAIL=0
 record() { status=$1; key=$2; shift 2; value=$*; printf '%s|%s|%s\n' "$status" "$key" "$value" | tee -a "$REPORT"; case "$status" in PASS) PASS=$((PASS+1));; WARN) WARN=$((WARN+1));; FAIL|ERROR) FAIL=$((FAIL+1));; esac; }

@@ -1,6 +1,6 @@
-# IP资产审批分配系统架构设计 v0.1
+# IP资产审批分配系统架构设计 v0.2
 
-> 状态：待评审基线；本文件只包含架构、数据模型和阶段计划，不包含业务实现代码。
+> 状态：第一阶段已有实现；第二阶段新增需求以 `docs/phase-2-requirements-and-acceptance.md` 为准。本文件仍只描述总体架构和阶段计划。
 >
 > 依据：`IP资源审批分配管理系统-需求文档.docx`、`D:\CODE\Projects\notes\mailsmanager-env-report.txt`、`D:\CODE\Projects\notes\MEMORY.md`。
 
@@ -12,9 +12,10 @@
 - 目标机未安装 Node.js 和 Nginx；运行期不能依赖它们。
 - 行内环境按普通用户权限部署，不要求 root/sudo，不擅自安装系统软件。
 - 浏览器最低兼容 IE11；前端产物必须转译为 ES5，并补齐必要 polyfill。
-- 系统账号独立于行内统一认证。角色为：管理员、科技管理员、科技管理员B角。
+- 系统账号独立于行内统一认证。当前角色为管理员、科技管理员；B角已从现行范围取消。
 - “注册”定义为管理员开通账号，不提供公网式自助注册接口。
-- 科技管理员和B角登录后可以自助修改本人的密码；必须先验证当前密码，改密成功后撤销该账号其他会话。管理员仍可执行密码重置，被重置账号首次登录必须改密。
+- 管理员和科技管理员登录后可以自助修改本人的密码；必须先验证当前密码，改密成功后撤销该账号其他会话。
+- 初始管理员可以创建其他管理员；所有管理员业务权限相同，但初始管理员永久禁止停用、删除、降级或取消保护。其他管理员可停用或软删除，任何管理员不能停用或删除自己。
 - 自动分配 IP 不在本期范围；管理员审批时必须手动选择具体 IP。
 
 ### 1.2 开发前必须补做的环境门禁
@@ -85,9 +86,9 @@ Spring Boot 单体应用
 - Cookie：`HttpOnly`、`SameSite=Lax`；生产启用 HTTPS 后设置 `Secure`。登录成功轮换会话 ID。
 - CSRF：所有写接口要求独立 CSRF Token；同时校验 Origin/Referer（在行内代理允许的前提下）。
 - 密码：BCrypt（cost 12，最终按目标机压测调整）；不存明文、可逆密文或静态默认密码。初始管理员通过一次性启动参数/控制台引导创建，并强制首次改密。
-- 自助改密：科技管理员和B角登录后输入当前密码、新密码和确认密码；验证通过后更新摘要、强制退出其他设备并写审计。忘记密码仍由管理员重置，系统不设置密保问题。
+- 自助改密：管理员和科技管理员登录后输入当前密码、新密码和确认密码；验证通过后更新摘要、强制退出其他设备并写审计。忘记密码仍由管理员重置，系统不设置密保问题。
 - 登录防护：失败次数限制、临时锁定、统一失败提示、登录/重置/启禁用全量审计。
-- 权限：ADMIN 管理全局；TECH_ADMIN 仅管理本人范围；TECH_ADMIN_BACKUP 以 `parent_user_id` 对应的科技管理员为业务所有者，但保留实际提交人 `submitted_by`。
+- 权限：ADMIN 管理全局且管理员之间业务权限相同；TECH_ADMIN 仅使用用户端功能。唯一初始管理员由保护标记区分，但不额外增加业务权限。
 
 ### 3.3 核心事务和状态机
 
@@ -123,11 +124,12 @@ RELEASE_EXCEPTION --管理员强制--> RELEASED
 
 ### 3.4 数据权限和安全补充
 
-- 普通用户不能用任意统一认证号查询他人资产；只能查询本人或其B角代理范围。管理员可按组织范围查询。
+- 科技管理员不能用任意统一认证号查询他人资产，只能查询本人数据；管理员可查询全局数据。
 - `branch_id`、`outlet_id`、姓名等在申请和分配表保留业务快照，避免组织/用户改名破坏历史审计。
 - 资源编码仅科技资产必填；非科技资产必须归一化为 `NULL`，不能用空字符串绕过规则。
 - 导出 CSV/XLSX 时对以 `= + - @` 开头的文本做公式注入防护，并记录导出人、范围和字段。
 - 所有审批、分配、撤销、强制释放、账号操作和配置修改写入不可由普通用户修改的审计日志。
+- 网点、地址段和IP资源池支持CSV/XLSX批量导入；采用上传校验预览、再次确认、整批事务提交，默认只新增且有一行错误即整批不写入。
 
 ## 4. 工程目录
 
@@ -148,7 +150,7 @@ RELEASE_EXCEPTION --管理员强制--> RELEASED
 │  │  ├─ common/            # 错误模型、分页、时间、请求ID
 │  │  ├─ config/            # 安全、数据库、调度、序列化
 │  │  ├─ auth/              # 登录、会话、CSRF、密码策略
-│  │  ├─ user/              # 账号与B角关系
+│  │  ├─ user/              # 管理员、科技管理员和初始管理员保护
 │  │  ├─ organization/      # 支行、网点、地址段、IP池
 │  │  ├─ application/       # IP申请
 │  │  ├─ allocation/        # 审批、手动分配
@@ -200,7 +202,7 @@ RELEASE_EXCEPTION --管理员强制--> RELEASED
 
 - 业务枚举在数据库中使用稳定英文码，中文只用于界面展示。
 - `ip_address_pool` 是必要补充表：只有地址段而没有逐 IP 清单，无法可靠地用表格选择 IP、统计空闲量和做并发占用。
-- `sys_session` 支持立即撤销会话；`audit_log` 支持安全审计。
+- `sys_session` 支持立即撤销会话；`audit_log` 支持安全审计；第二阶段的 `bulk_import_job` 和 `bulk_import_error` 见阶段需求文档。
 - 每个 JDBC 连接都必须执行 `PRAGMA foreign_keys=ON` 和 `PRAGMA busy_timeout=5000`；应用启动时确认 `PRAGMA journal_mode=WAL` 返回 `wal`，并使用 `PRAGMA synchronous=FULL` 优先保证断电耐久性。
 - SQLite 写入经应用内队列串行化，事务必须短；应用只允许单实例运行。唯一性和外键由数据库兜底，复杂跨字段规则由服务层和自动化测试强制。
 - SQLite 部分唯一索引实现“只有未释放记录占用 IP/资源编码”，保留完整历史的同时允许释放后再次使用。
@@ -279,16 +281,14 @@ CREATE TABLE ip_address_pool (
 CREATE INDEX idx_ip_pool_range_available
   ON ip_address_pool(ip_range_id, is_active, is_reserved, ip_address);
 
--- 独立系统账号。parent_user_id仅B角使用，并通过唯一约束保持一对一。
+-- 独立系统账号。初始管理员只有一个并受到永久保护。
 CREATE TABLE sys_user (
   id INTEGER PRIMARY KEY,
   username TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK(length(username) BETWEEN 3 AND 64),
   password_hash TEXT NOT NULL CHECK(length(password_hash) BETWEEN 40 AND 255),
   real_name TEXT NOT NULL CHECK(length(real_name) BETWEEN 1 AND 100),
-  role TEXT NOT NULL CHECK(role IN ('ADMIN','TECH_ADMIN','TECH_ADMIN_BACKUP')),
-  branch_id INTEGER NULL,
-  outlet_id INTEGER NULL,
-  parent_user_id INTEGER NULL UNIQUE,
+  role TEXT NOT NULL CHECK(role IN ('ADMIN','TECH_ADMIN')),
+  is_initial_admin INTEGER NOT NULL DEFAULT 0 CHECK(is_initial_admin IN (0, 1)),
   is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
   must_change_password INTEGER NOT NULL DEFAULT 1 CHECK(must_change_password IN (0, 1)),
   failed_login_count INTEGER NOT NULL DEFAULT 0 CHECK(failed_login_count >= 0),
@@ -298,13 +298,30 @@ CREATE TABLE sys_user (
   created_by INTEGER NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  deleted_at TEXT NULL,
   version INTEGER NOT NULL DEFAULT 0 CHECK(version >= 0),
-  FOREIGN KEY(branch_id) REFERENCES branch(id) ON UPDATE RESTRICT ON DELETE RESTRICT,
-  FOREIGN KEY(outlet_id) REFERENCES outlet(id) ON UPDATE RESTRICT ON DELETE RESTRICT,
-  FOREIGN KEY(parent_user_id) REFERENCES sys_user(id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CHECK(is_initial_admin = 0 OR (role = 'ADMIN' AND is_active = 1 AND deleted_at IS NULL)),
   FOREIGN KEY(created_by) REFERENCES sys_user(id) ON UPDATE RESTRICT ON DELETE RESTRICT
 );
-CREATE INDEX idx_sys_user_scope ON sys_user(branch_id, outlet_id, role, is_active);
+CREATE UNIQUE INDEX uk_sys_user_single_initial_admin
+  ON sys_user(is_initial_admin) WHERE is_initial_admin = 1;
+CREATE INDEX idx_sys_user_role_state ON sys_user(role, is_active, deleted_at);
+
+CREATE TRIGGER trg_initial_admin_no_delete
+BEFORE DELETE ON sys_user
+WHEN OLD.is_initial_admin = 1
+BEGIN
+  SELECT RAISE(ABORT, 'INITIAL_ADMIN_PROTECTED');
+END;
+
+CREATE TRIGGER trg_initial_admin_no_disable_or_demote
+BEFORE UPDATE ON sys_user
+WHEN OLD.is_initial_admin = 1
+ AND (NEW.is_initial_admin <> 1 OR NEW.role <> 'ADMIN'
+      OR NEW.is_active <> 1 OR NEW.deleted_at IS NOT NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'INITIAL_ADMIN_PROTECTED');
+END;
 
 -- IP申请记录；applicant_id是业务归属人，submitted_by是实际操作者。
 CREATE TABLE ip_application (
@@ -453,7 +470,7 @@ CREATE INDEX idx_audit_target_time ON audit_log(target_type, target_id, created_
 
 服务层必须在事务内强制以下规则：
 
-- ADMIN 的 `branch_id/outlet_id/parent_user_id` 为空；TECH_ADMIN 有组织归属且 `parent_user_id` 为空；B角必须指向启用的 TECH_ADMIN，且组织范围一致。
+- 所有管理员业务权限相同；只有唯一初始管理员具有不可停用、不可删除、不可降级的保护属性。任何管理员不能停用或删除自己。
 - 科技资产的 `resource_code`、`device_type` 必填；非科技资产二者统一写 `NULL`。
 - `outlet_id` 必须属于所选 `branch_id`。
 - 分配 IP 必须属于该申请支行的启用地址段，且不是网络地址、广播地址、网关或保留地址。
@@ -472,21 +489,23 @@ CREATE INDEX idx_audit_target_time ON audit_log(target_type, target_id, created_
 - 完成 JDK、SQLite JDBC ARM64加载、数据目录、ping、IE11、端口和 HTTPS 只读预检并形成报告；不要求目标机安装 Maven/MySQL。
 - 初始化 Git 基线、前后端工程、离线依赖锁定、`schema_history` 版本化迁移。
 - 实现支行、网点、地址段和 IP 池管理。
-- 实现管理员安全初始化、登录/退出、会话、CSRF、密码策略、自助改密、创建/重置/启禁用账号和B角绑定。
+- 实现管理员安全初始化、登录/退出、会话、CSRF、密码策略、自助改密，以及科技管理员创建/重置/启禁用。
 - 建立统一错误模型、请求ID和审计日志。
 
-验收门：三角色登录、自助改密和越权测试通过；禁用/重置/自助改密后的会话撤销符合规则；SQLite 外键/WAL/忙等待/备份恢复测试通过；发布包在麒麟 Java 11/ARM64 成功加载驱动。
+验收门：管理员和科技管理员登录、自助改密和越权测试通过；禁用/重置/自助改密后的会话撤销符合规则；SQLite 外键/WAL/忙等待/备份恢复测试通过；发布包在麒麟 Java 11/ARM64 成功加载驱动。
 
-### 阶段二：申请、审批与手动分配闭环
+### 阶段二：多管理员、批量导入、申请审批与手动分配闭环
 
 任务：
 
-- 实现申请表单、动态必填规则、本人/B角权限。
+- 实现申请表单、动态必填规则和本人数据权限。
+- 实现初始管理员保护、其他管理员创建/启停/软删除及同权管理。
+- 实现网点、地址段、IP资源池CSV/XLSX模板、预检预览和整批导入。
 - 实现待审批列表、驳回、可搜索分页的 IP 表格弹窗和审批分配事务。
 - 实现 IP/资源编码唯一占用、并发审批防重、站内通知。
 - 实现用户查询，但限制为本人或合法代理范围。
 
-验收门：状态机测试、两个管理员并发选择同一 IP 的竞争测试、科技/非科技字段测试、越权查询测试全部通过；不存在“已批准但无分配记录”。
+验收门：初始管理员数据库/API/UI三层保护通过；其他管理员同权及启停软删除通过；三类CSV/XLSX导入安全与整批回滚测试通过；申请状态机、两个管理员并发选择同一 IP、科技/非科技字段和越权查询测试全部通过；不存在“已批准但无分配记录”。
 
 ### 阶段三：撤销释放、监控与导出
 
@@ -513,10 +532,8 @@ CREATE INDEX idx_audit_target_time ON audit_log(target_type, target_id, created_
 
 ## 7. 评审时需要确认的决策
 
-1. 管理员是唯一全局超级管理员，还是以后需要按支行分权的审批管理员。
-2. B角是否严格一对一；当前 SQL 按“一个科技管理员最多一个B角”设计。
-3. “通知”本期是否仅站内消息，还是要接邮件/短信；本设计默认仅站内消息。
-4. 统一认证号的格式、长度、是否属于敏感字段，以及日志/导出的脱敏要求。
-5. 是否只支持 IPv4；表长兼容 IPv6，但 CIDR 展开、广播地址和 ping 参数本期建议先限定 IPv4。
-6. 生产是否必须 HTTPS；若必须，需要确认行内证书来源和 IE11 可接受的 TLS 套件。
-7. SQLite 数据文件和备份文件最终放置目录、备份保留周期、恢复责任人；数据文件必须在本机磁盘。
+1. “通知”本期是否仅站内消息，还是要接邮件/短信；本设计默认仅站内消息。
+2. 统一认证号的格式、长度、是否属于敏感字段，以及日志/导出的脱敏要求。
+3. 是否只支持 IPv4；表长兼容 IPv6，但 CIDR 展开、广播地址和 ping 参数本期建议先限定 IPv4。
+4. 生产是否必须 HTTPS；若必须，需要确认行内证书来源和 IE11 可接受的 TLS 套件。
+5. SQLite 数据文件和备份文件最终放置目录、备份保留周期、恢复责任人；数据文件必须在本机磁盘。

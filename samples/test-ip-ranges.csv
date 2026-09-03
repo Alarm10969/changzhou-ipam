@@ -1,0 +1,2 @@
+branch_code,outlet_code,cidr,subnet_mask,gateway,dns_primary,dns_secondary,is_active
+TEST001,TESTOUT01,10.250.10.0/24,255.255.255.0,10.250.10.1,114.114.114.114,223.5.5.5,是
