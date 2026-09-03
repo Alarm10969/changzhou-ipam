@@ -29,10 +29,11 @@ public final class IpamApplication {
   private static final int SESSION_HOURS = 8;
   private final Database db;
   private final PhaseTwoService phaseTwo;
+  private final PhaseThreeService phaseThree;
   private final Path staticDir;
   private final boolean secureCookie;
 
-  private IpamApplication(Database db, Path staticDir, boolean secureCookie) throws IOException { this.db = db; this.phaseTwo = new PhaseTwoService(db.file); this.staticDir = staticDir; this.secureCookie = secureCookie; }
+  private IpamApplication(Database db, Path staticDir, boolean secureCookie) throws IOException { this.db = db; this.phaseTwo = new PhaseTwoService(db.file); this.phaseThree = new PhaseThreeService(db.file); this.staticDir = staticDir; this.secureCookie = secureCookie; }
 
   public static void main(String[] args) throws Exception {
     Path data = Paths.get(env("IPAM_DATA_DIR", "data")).toAbsolutePath().normalize();
@@ -45,7 +46,7 @@ public final class IpamApplication {
     HttpServer server = HttpServer.create(new InetSocketAddress(env("IPAM_BIND", "127.0.0.1"), port), 64);
     server.createContext("/", new IpamApplication(db, staticDir, Boolean.parseBoolean(env("IPAM_SECURE_COOKIE", "false")))::handle);
     server.setExecutor(Executors.newFixedThreadPool(12)); server.start();
-    System.out.println("IPAM stage-2 is listening on http://" + env("IPAM_BIND", "127.0.0.1") + ":" + port + ", database=" + data.resolve("ipam.db"));
+    System.out.println("IPAM stage-3 is listening on http://" + env("IPAM_BIND", "127.0.0.1") + ":" + port + ", database=" + data.resolve("ipam.db"));
   }
 
   private void handle(HttpExchange x) throws IOException {
@@ -68,6 +69,10 @@ public final class IpamApplication {
     if ("auth/logout".equals(path) && "POST".equals(method)) { db.revokeSession(p.sessionId); audit(p, requestId,"LOGOUT","SESSION",String.valueOf(p.sessionId),"SUCCESS",null); expireCookie(x); respond(x,204,null); return; }
     if ("auth/change-password".equals(path) && "POST".equals(method)) { changePassword(x,p,requestId); return; }
     if (p.mustChangePassword) throw new ApiError(403,"PASSWORD_CHANGE_REQUIRED","该账号必须先修改初始或重置后的密码。");
+    if ("my-assignments".equals(path) && "GET".equals(method)) { if(!"TECH_ADMIN".equals(p.role))throw new ApiError(403,"FORBIDDEN","仅科技管理员可查询本人 IP。"); respond(x,200,map("items",phaseThree.myAssignments(p.id))); return; }
+    if (path.matches("my-assignments/\\d+/release") && "POST".equals(method)) { if(!"TECH_ADMIN".equals(p.role))throw new ApiError(403,"FORBIDDEN","仅科技管理员可释放本人 IP。"); JsonObject b=body(x); respond(x,200,phaseThree.release(parseId(path),p.id,optional(b,"reason",500),requestId)); return; }
+    if ("notifications".equals(path) && "GET".equals(method)) { respond(x,200,map("items",phaseThree.notifications(p.id))); return; }
+    if (path.matches("notifications/\\d+/read") && "POST".equals(method)) { phaseThree.markRead(parseId(path),p.id); respond(x,204,null); return; }
     if ("applications".equals(path) && "GET".equals(method)) { if(!"TECH_ADMIN".equals(p.role))throw new ApiError(403,"FORBIDDEN","仅科技管理员可查询本人申请。"); respond(x,200,map("items",phaseTwo.myApplications(p.id))); return; }
     if ("applications".equals(path) && "POST".equals(method)) { if(!"TECH_ADMIN".equals(p.role))throw new ApiError(403,"FORBIDDEN","仅科技管理员可提交申请。"); long id=phaseTwo.submitApplication(p.id,body(x)); respond(x,201,map("id",id,"status","PENDING")); return; }
     if ("outlets".equals(path) && "GET".equals(method)) { respond(x,200,map("items",db.rows("SELECT o.id,o.branch_id AS branchId,o.code,o.name FROM outlet o JOIN branch b ON b.id=o.branch_id WHERE o.is_active=1 AND o.deleted_at IS NULL AND b.is_active=1 AND b.deleted_at IS NULL ORDER BY o.branch_id,o.name"))); return; }
@@ -103,6 +108,9 @@ public final class IpamApplication {
     if (path.matches("users/\\d+/active") && "PUT".equals(m)) { activeUser(x,p,requestId,parseId(path)); return; }
     if (path.matches("users/\\d+") && "DELETE".equals(m)) { deleteUser(x,p,requestId,parseId(path)); return; }
     if ("dashboard".equals(path) && "GET".equals(m)) { respond(x,200,phaseTwo.dashboard()); return; }
+    if ("resource-overview".equals(path) && "GET".equals(m)) { respond(x,200,phaseThree.overview(query(x,"branchId"),query(x,"outletId"))); return; }
+    if ("release-history".equals(path) && "GET".equals(m)) { respond(x,200,map("items",phaseThree.releases(query(x,"q"),query(x,"branch"),query(x,"outlet"),query(x,"assetType"),query(x,"from"),query(x,"to")))); return; }
+    if ("exports".equals(path) && "POST".equals(m)) { JsonObject b=body(x); String type=required(b,"type",32),format=required(b,"format",8); Set<String> fields=new LinkedHashSet<>();if(b.has("fields")&&b.get("fields").isJsonArray())for(JsonElement e:b.getAsJsonArray("fields"))fields.add(e.getAsString());Map<String,String> filters=new LinkedHashMap<>();if(b.has("filters")&&b.get("filters").isJsonObject())for(Map.Entry<String,JsonElement> e:b.getAsJsonObject("filters").entrySet())filters.put(e.getKey(),e.getValue().getAsString()); byte[] data=phaseThree.export(type,format,fields,filters,p.id);String ext="XLSX".equals(format)?"xlsx":"csv";binary(x,200,data,"XLSX".equals(format)?"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":"text/csv; charset=utf-8","attachment; filename=ipam-"+type.toLowerCase()+"-"+Instant.now().toEpochMilli()+"."+ext); return; }
     if ("applications".equals(path) && "GET".equals(m)) { respond(x,200,map("items",phaseTwo.applications(query(x,"status"),query(x,"branchId"),query(x,"outletId"),query(x,"q")))); return; }
     if (path.matches("applications/\\d+/reject") && "POST".equals(m)) { phaseTwo.reject(parseId(path),p.id,required(body(x),"reason",500)); audit(p,requestId,"REJECT_APPLICATION","APPLICATION",String.valueOf(parseId(path)),"SUCCESS",null); respond(x,204,null); return; }
     if (path.matches("applications/\\d+/approve") && "POST".equals(m)) { JsonObject b=body(x); phaseTwo.approve(parseId(path),number(b,"poolId"),p.id); audit(p,requestId,"APPROVE_APPLICATION","APPLICATION",String.valueOf(parseId(path)),"SUCCESS",null); respond(x,204,null); return; }

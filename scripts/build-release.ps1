@@ -32,8 +32,8 @@ Copy-Item (Join-Path $projectRoot 'README.md') (Join-Path $OutputDirectory 'READ
 Copy-Item (Join-Path $projectRoot 'VERSION.txt') (Join-Path $OutputDirectory 'VERSION.txt') -Force
 Copy-Item (Join-Path $backend 'dependencies.sha256') (Join-Path $OutputDirectory 'dependencies.sha256') -Force
 $manifest=Join-Path $OutputDirectory 'MANIFEST.MF'; "Main-Class: com.icbc.changzhou.ipam.IpamApplication`r`nClass-Path: lib/sqlite-jdbc-3.53.1.0.jar lib/gson-2.10.1.jar lib/jbcrypt-0.4.jar lib/slf4j-api-2.0.17.jar lib/slf4j-nop-2.0.17.jar lib/poi-5.5.1.jar lib/poi-ooxml-5.5.1.jar lib/poi-ooxml-lite-5.5.1.jar lib/xmlbeans-5.3.0.jar lib/commons-codec-1.20.0.jar lib/commons-collections4-4.5.0.jar lib/commons-compress-1.28.0.jar lib/commons-io-2.21.0.jar lib/commons-math3-3.6.1.jar lib/curvesapi-1.08.jar lib/SparseBitSet-1.3.jar lib/log4j-api-2.24.3.jar lib/log4j-to-slf4j-2.24.3.jar`r`n" | Set-Content -LiteralPath $manifest -Encoding ascii
-& jar cfm (Join-Path $OutputDirectory 'ipam-stage2.jar') $manifest -C $classes .
+& jar cfm (Join-Path $OutputDirectory 'ipam-stage3.jar') $manifest -C $classes .
 if ($LASTEXITCODE -ne 0) { throw 'JAR packaging failed.' }
 Remove-Item -LiteralPath $manifest -Force
-Get-FileHash (Join-Path $OutputDirectory 'ipam-stage2.jar') -Algorithm SHA256 | Format-List
+Get-FileHash (Join-Path $OutputDirectory 'ipam-stage3.jar') -Algorithm SHA256 | Format-List
 Write-Output "Release directory created: $OutputDirectory"

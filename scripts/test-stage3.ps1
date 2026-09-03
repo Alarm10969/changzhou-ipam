@@ -1,0 +1,12 @@
+$ErrorActionPreference='Stop'
+$root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+& (Join-Path $PSScriptRoot 'test-stage1.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Stage 1 regression failed.' }
+& (Join-Path $PSScriptRoot 'test-stage2.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Stage 2 regression failed.' }
+& (Join-Path $PSScriptRoot 'build-release.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
+$release=Join-Path $root 'release'
+$cp=((Get-ChildItem (Join-Path $release 'lib') -Filter *.jar | ForEach-Object FullName) + (Join-Path $release 'classes')) -join ';'
+& java -cp $cp com.icbc.changzhou.ipam.StageThreeSmokeTest
+if ($LASTEXITCODE -ne 0) { throw 'Stage 3 regression failed.' }

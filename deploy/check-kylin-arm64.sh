@@ -2,7 +2,7 @@
 # 一次性只读/临时麒麟 ARM64 门禁。不会安装软件、修改系统配置或启动正式服务。
 set -u
 BASE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-APP_JAR=${IPAM_JAR:-"$BASE_DIR/ipam-stage2.jar"}
+APP_JAR=${IPAM_JAR:-"$BASE_DIR/ipam-stage3.jar"}
 LIB_DIR=${IPAM_LIB_DIR:-"$BASE_DIR/lib"}
 DATA_DIR=${IPAM_DATA_DIR:-"$BASE_DIR/data"}
 REPORT=${1:-"$BASE_DIR/kylin-stage2-report-$(date +%Y%m%d-%H%M%S).txt"}

@@ -205,9 +205,10 @@
     if (S.u.role === 'ADMIN') {
       x += '<small>账号与审批</small><button data-v="users">账号管理</button><button data-v="applications">申请审批 <span id="navPending" class="nav-badge">' + (S.pendingCount == null ? '…' : S.pendingCount) + '</span></button>';
       x += '<small>基础资料</small><button data-v="branches">支行</button><button data-v="outlets">网点</button><button data-v="ranges">地址段</button><button data-v="pool">IP 资源池</button>';
-      x += '<small>安全</small><button data-v="audit">审计日志</button>';
+      x += '<small>资源运营</small><button data-v="overview">资源概览</button><button data-v="releases">释放记录</button><button data-v="exports">数据导出</button>';
+      x += '<small>安全</small><button data-v="notifications">站内通知</button><button data-v="audit">审计日志</button>';
     } else {
-      x += '<small>IP 申请</small><button data-v="apply">提交申请</button><button data-v="mine">我的申请</button>';
+      x += '<small>IP 申请</small><button data-v="apply">提交申请</button><button data-v="mine">我的申请</button><button data-v="myips">我的 IP</button><button data-v="notifications">站内通知</button>';
     }
     return x;
   }
@@ -219,7 +220,7 @@
       loginPage();
       return;
     }
-    app.innerHTML = '<header><div class="brand"><i>IP</i> IP 资源管理平台 <em>第二阶段</em></div><div>' + e(S.u.realName) + ' · ' + role(S.u.role) + ' <button id="out">退出</button></div></header><div class="shell"><nav id="nav">' + nav() + '</nav><main id="main"></main></div>';
+    app.innerHTML = '<header><div class="brand"><i>IP</i> IP 资源管理平台 <em>第三阶段</em></div><div>' + e(S.u.realName) + ' · ' + role(S.u.role) + ' <button id="out">退出</button></div></header><div class="shell"><nav id="nav">' + nav() + '</nav><main id="main"></main></div>';
     document.getElementById('out').onclick = function () {
       q('POST', 'auth/logout', {}, function () {
         S = { u: null, c: null, v: 'home', branches: [] };
@@ -256,6 +257,11 @@
     else if (S.v === 'pool') pool();
     else if (S.v === 'apply') apply();
     else if (S.v === 'mine') mine();
+    else if (S.v === 'myips') myips();
+    else if (S.v === 'overview') overview();
+    else if (S.v === 'releases') releases();
+    else if (S.v === 'exports') exports();
+    else if (S.v === 'notifications') notifications();
     else audit();
   }
 
@@ -786,6 +792,45 @@
       };
     });
   }
+
+  function myips() {
+    document.getElementById('main').innerHTML = head('我的资源', '我的 IP', '使用中的 IP 可立即释放；释放后需要重新提交申请才能再次使用。') + '<section class="card"><div id="notice"></div><div id="table">加载中…</div></section>';
+    q('GET', 'my-assignments', null, function (r) {
+      var h='<table><tr><th>状态</th><th>IP 与网络参数</th><th>组织与资产</th><th>分配/释放时间</th><th>操作</th></tr>',i,x;
+      for(i=0;i<r.items.length;i++){x=r.items[i];h+='<tr><td><span class="status status-'+(x.status==='ASSIGNED'?'assigned':'rejected')+'">'+(x.status==='ASSIGNED'?'使用中':'已释放')+'</span></td><td><b>'+e(x.ipAddress)+'</b><br><small>掩码 '+e(x.subnetMask)+'；网关 '+e(x.gateway)+'</small></td><td>'+e(x.branchName)+' / '+e(x.outletName)+'<br>'+e(x.assetType==='TECH'?'科技资产：'+(x.assetCode||'—'):'非科技资产')+'</td><td>分配：'+e(formatDate(x.assignedAt))+(x.releasedAt?'<br>释放：'+e(formatDate(x.releasedAt)):'')+'</td><td>'+(x.status==='ASSIGNED'?'<button class="danger" data-release="'+x.id+'">释放 IP</button>':'—')+'</td></tr>';}
+      document.getElementById('table').innerHTML=r.items.length?h+'</table>':empty('暂无 IP 分配记录','申请通过后会在此显示已分配 IP。');
+      var bs=document.getElementById('table').getElementsByTagName('button');for(i=0;i<bs.length;i++)bs[i].onclick=function(){var id=this.getAttribute('data-release'),item,j;for(j=0;j<r.items.length;j++)if(String(r.items[j].id)===String(id))item=r.items[j];releaseDialog(item);};
+    },function(){var t=document.getElementById('table');if(t)t.innerHTML=empty('我的 IP 加载失败','请根据页面提示处理后重试。');});
+  }
+
+  function releaseDialog(item) {
+    var summary='<div class="release-warning"><b>请确认以下释放信息</b><p><strong>IP 地址：</strong>'+e(item.ipAddress)+'</p><p><strong>支行和网点：</strong>'+e(item.branchName)+' / '+e(item.outletName)+'</p><p><strong>资产类型：</strong>'+e(item.assetType==='TECH'?'科技资产':'非科技资产')+'</p><p><strong>科技资产资源编码：</strong>'+e(item.assetCode||'—')+'</p><p><strong>原分配时间：</strong>'+e(formatDate(item.assignedAt))+'</p><div class="notice bad">确认后立即释放，无需管理员审批。释放后该 IP 可能被分配给其他资产；如需再次使用，必须重新申请。</div></div><div><label for="releaseReason">释放原因（可选）</label><textarea id="releaseReason" maxlength="500" rows="3" placeholder="可填写本次释放说明"></textarea></div>';
+    systemDialog('确认立即释放 IP', '此操作不可直接撤销，请核对分配信息。', summary, '确认立即释放', function(){return {reason:val('releaseReason')};}, function(root,data,button){q('POST','my-assignments/'+item.id+'/release',data,function(){closeDialog(root);reloadMessage(myips,'IP 已立即释放，管理员已收到站内通知。');},null,button,'释放处理中…');});
+  }
+
+  function notifications() {
+    document.getElementById('main').innerHTML=head('消息中心','站内通知','释放通知仅用于告知，可标记已读并进入相关释放记录。')+'<section class="card"><div id="table">加载中…</div></section>';
+    q('GET','notifications',null,function(r){var h='',i,x;for(i=0;i<r.items.length;i++){x=r.items[i];h+='<div class="history-row '+(x.isRead===1?'read':'')+'"><span>'+e(formatDate(x.createdAt))+'</span><b>'+e(x.message)+'</b>'+(x.releaseEventId?'<button data-history="1" data-read="'+x.id+'">查看释放记录</button>':'')+(x.isRead===1?'':'<button data-read="'+x.id+'">标记已读</button>')+'</div>';}document.getElementById('table').innerHTML=h||empty('暂无站内通知','释放或审批结果会在此显示。');var bs=document.getElementById('table').getElementsByTagName('button');for(i=0;i<bs.length;i++)bs[i].onclick=function(){var id=this.getAttribute('data-read'),go=this.getAttribute('data-history');q('POST','notifications/'+id+'/read',{},function(){if(go){S.v='releases';view();}else notifications();});};},function(){var t=document.getElementById('table');if(t)t.innerHTML=empty('通知加载失败','请根据页面提示处理后重试。');});
+  }
+
+  function releases() {
+    S.releaseFilter=S.releaseFilter||{q:'',assetType:'',from:'',to:''};
+    document.getElementById('main').innerHTML=head('资源运营','释放记录','仅供查看，不提供释放审批或恢复入口。')+'<section class="card filter-card"><div id="notice"></div><div class="filter-layout"><div class="filter-fields"><div class="filter-field filter-keyword"><label for="releaseQ">释放人或 IP</label><input id="releaseQ" value="'+e(S.releaseFilter.q)+'" placeholder="科技管理员账号或 IP"></div><div class="filter-field"><label for="releaseAsset">资产类型</label><select id="releaseAsset"><option value="">全部</option><option value="TECH"'+(S.releaseFilter.assetType==='TECH'?' selected':'')+'>科技资产</option><option value="NON_TECH"'+(S.releaseFilter.assetType==='NON_TECH'?' selected':'')+'>非科技资产</option></select></div><div class="filter-field"><label for="releaseFrom">开始日期</label><input id="releaseFrom" type="date" value="'+e(S.releaseFilter.from)+'"></div><div class="filter-field"><label for="releaseTo">结束日期</label><input id="releaseTo" type="date" value="'+e(S.releaseFilter.to)+'"></div></div><div class="filter-actions"><button id="releaseSearch" class="primary">查询记录</button></div></div></section><section class="card"><div id="table">加载中…</div></section>';
+    function load(){var p='admin/release-history?q='+encodeURIComponent(S.releaseFilter.q)+'&assetType='+encodeURIComponent(S.releaseFilter.assetType)+'&from='+encodeURIComponent(S.releaseFilter.from)+'&to='+encodeURIComponent(S.releaseFilter.to);q('GET',p,null,function(r){var h='<table><tr><th>释放时间</th><th>释放人</th><th>IP / 资源编码</th><th>组织</th><th>资产类型</th><th>审计</th></tr>',i,x;for(i=0;i<r.items.length;i++){x=r.items[i];h+='<tr><td>'+e(formatDate(x.releasedAt))+'</td><td>'+e(x.releasedBy)+'</td><td><b>'+e(x.ipAddress)+'</b><br>'+e(x.resourceCode||'—')+'</td><td>'+e(x.branchName)+' / '+e(x.outletName)+'</td><td>'+e(x.assetType==='TECH'?'科技资产':'非科技资产')+'</td><td>'+e(x.auditAction||'RELEASE_IP')+'</td></tr>';}document.getElementById('table').innerHTML=r.items.length?h+'</table>':empty('暂无释放记录','调整筛选条件，或等待科技管理员释放已分配 IP。');},function(){var t=document.getElementById('table');if(t)t.innerHTML=empty('释放记录加载失败','请根据页面提示处理后重试。');});}
+    document.getElementById('releaseSearch').onclick=function(){S.releaseFilter={q:val('releaseQ'),assetType:val('releaseAsset'),from:val('releaseFrom'),to:val('releaseTo')};load();};load();
+  }
+
+  function overview() {
+    document.getElementById('main').innerHTML=head('资源运营','资源概览','统计仅反映数据库中的资源使用情况，不执行网络连通性检测。')+'<section class="card"><div id="overviewStats">加载中…</div></section><section class="card"><h3>支行使用率</h3><div id="usageChart" class="chart" aria-label="支行 IP 使用率图表"></div><p class="hint">图表数据同时完整列在下表中，便于旧浏览器或辅助阅读。</p><div id="table">加载中…</div></section>';
+    q('GET','admin/resource-overview',null,function(r){var h='<div class="stats five"><div>地址总数<strong>'+r.addressTotal+'</strong></div><div>当前可分配<strong>'+r.availableCount+'</strong></div><div>当前已分配<strong>'+r.assignedCount+'</strong></div><div>累计已释放<strong>'+r.releasedTotal+'</strong></div><div>待审批<strong>'+r.pendingCount+'</strong></div></div><div class="stats five"><div>停用<strong>'+r.disabledCount+'</strong></div><div>人工保留<strong>'+r.manualReservedCount+'</strong></div><div>系统保留<strong>'+r.systemReservedCount+'</strong></div><div>今日释放<strong>'+r.todayReleased+'</strong></div><div>使用率<strong>'+r.usageRate+'%</strong></div></div>';document.getElementById('overviewStats').innerHTML=h;var t='<table><tr><th>支行</th><th>当前已分配</th><th>当前可用</th><th>使用率</th></tr>',i,x,total,rate,names=[],rates=[];for(i=0;i<r.branches.length;i++){x=r.branches[i];total=Number(x.availableCount||0)+Number(x.assignedCount||0);rate=total?Math.round(Number(x.assignedCount)*10000/total)/100:0;names.push(x.branchName);rates.push(rate);t+='<tr><td>'+e(x.branchName)+'</td><td>'+x.assignedCount+'</td><td>'+x.availableCount+'</td><td>'+rate+'%</td></tr>';}if(window.echarts){window.echarts.init(document.getElementById('usageChart')).setOption({animation:false,grid:{left:55,right:20,top:25,bottom:55},xAxis:{type:'category',data:names,axisLabel:{interval:0,rotate:25}},yAxis:{type:'value',max:100,axisLabel:{formatter:'{value}%'}},series:[{type:'bar',data:rates,itemStyle:{color:'#17649e'}}]});}t+='</table><h3>网点剩余 IP</h3><table><tr><th>支行</th><th>网点</th><th>剩余 IP</th></tr>';for(i=0;i<r.outlets.length;i++){x=r.outlets[i];t+='<tr><td>'+e(x.branchName)+'</td><td>'+e(x.outletName)+'</td><td>'+x.availableCount+'</td></tr>';}document.getElementById('table').innerHTML=t;},function(){document.getElementById('overviewStats').innerHTML=empty('资源统计加载失败','请检查服务状态后重试。');var t=document.getElementById('table');if(t)t.innerHTML='';});
+  }
+
+  function exports() {
+    document.getElementById('main').innerHTML=head('资源运营','数据导出','仅导出经字段白名单允许的数据；统一认证号默认不在任何导出中。')+'<section class="card"><div id="notice"></div><div class="grid"><div><label for="exportType">数据类型</label><select id="exportType"><option value="POOL">IP 资源池</option><option value="APPLICATION">申请记录</option><option value="ASSIGNMENT">当前分配记录</option><option value="RELEASE">已释放记录</option><option value="STATISTICS">支行和网点资源统计</option></select></div><div><label for="exportFormat">文件格式</label><select id="exportFormat"><option value="CSV">CSV（UTF-8）</option><option value="XLSX">XLSX（无宏）</option></select></div></div><p class="hint">文件名带安全时间戳。超过最大行数请先缩小查询范围。</p><button id="downloadExport" class="primary">下载导出文件</button></section>';
+    document.getElementById('downloadExport').onclick=function(){downloadExport(this,val('exportType'),val('exportFormat'));};
+  }
+
+  function downloadExport(button,type,format) { var x=new XMLHttpRequest();if(busy(button,true,'正在生成文件…')===false)return;x.open('POST','/api/v1/admin/exports',true);x.responseType='blob';x.setRequestHeader('Content-Type','application/json');x.setRequestHeader('X-CSRF-Token',S.c);x.onreadystatechange=function(){if(x.readyState!==4)return;busy(button,false);if(x.status>=200&&x.status<300){var a=document.createElement('a'),url=window.URL.createObjectURL(x.response);a.href=url;a.download='ipam-'+String(type).toLowerCase()+'.'+(format==='XLSX'?'xlsx':'csv');document.body.appendChild(a);a.click();document.body.removeChild(a);window.URL.revokeObjectURL(url);msg('导出文件已开始下载。',0);return;}var reader=new FileReader();reader.onload=function(){var r={};try{r=JSON.parse(reader.result||'{}');}catch(ignore){}msg(r.message||'导出未完成，请缩小范围后重试。',1);};reader.readAsText(x.response||new Blob());};x.onerror=function(){busy(button,false);msg('导出连接中断，请检查服务状态。',1);};x.send(JSON.stringify({type:type,format:format,fields:[]})); }
 
   function audit() {
     document.getElementById('main').innerHTML = head('安全中心', '审计日志', '最近 200 条操作记录。') +

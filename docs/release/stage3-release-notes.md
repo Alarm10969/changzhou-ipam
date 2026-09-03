@@ -1,0 +1,9 @@
+# 第三阶段变更说明
+
+- 新增科技管理员本人已分配 IP 的二次确认后立即释放；已释放 IP 和资源编码可再次申请。
+- 新增管理员站内释放通知、已读状态与释放记录筛选。
+- 新增资源概览、支行使用率 Canvas 图表和完整数据表。
+- 新增 IP 资源池、申请、当前分配、已释放和资源统计的 CSV/XLSX 安全导出。
+- 数据库从 V006 连续增量升级至 V007；安装前自动生成 SQLite 备份，原库不删除。
+
+离线图表依赖：Apache ECharts 4.9.0，Apache-2.0，来源为 Apache 官方 GitHub 发布标签 `4.9.0` 的 `dist/echarts.min.js`，包内文件 `frontend/vendor/echarts-4.9.0.min.js` SHA-256：`97000C70420CE0B6C7D9E450D7C9919F97F034FA8EC046AC96719C08A2BBF324`。

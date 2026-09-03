@@ -1,3 +1,3 @@
-2.1.0-usability
+3.0.0-immediate-release-export
 Build target: Kylin ARM64 / Java 11
-Data schema: V001-V006 (additive soft-delete and default-DNS migration)
+Data schema: V001-V007 (immediate release, notification, statistics and export)
