@@ -1,3 +1,3 @@
-3.2.1-global-pool-query
+3.3.0-six-network-baseline
 Build target: Kylin ARM64 / Java 11
 Data schema: V001-V009 (outlet directory without redundant managed outlet number)
