@@ -60,10 +60,11 @@ public final class StageTwoSmokeTest {
     String js=Files.readString(Paths.get("frontend","app.js"),StandardCharsets.UTF_8);
     String[] preserved={"清晰、安全、可追溯的资源基础管理。","function branches()","function outlets()","function ranges()","function pool()"};
     for(String marker:preserved)if(!js.contains(marker))throw new AssertionError("phase-one frontend marker missing: "+marker);
-    String[] added={"function applications()","function apply()","function mine()","function bindBulk(","function openIpPicker(","function editDialog(","function rangeFields(","function sessionExpired(","PASSWORD_CHANGE_REQUIRED","data-busy","登录状态已失效，请重新登录","function ipStateText(","admin/ip-pool/status","暂无待审批申请","function showFlash(","S.u.role === 'ADMIN' ? 'admin/branches' : 'branches'","admin/network-defaults","admin/branches/","admin/outlets/","filter-layout","确认删除支行","确认删除网点"};
+    String[] added={"function applications()","function apply()","function mine()","function bindBulk(","function openIpPicker(","function editDialog(","function rangeFields(","function sessionExpired(","PASSWORD_CHANGE_REQUIRED","data-busy","登录状态已失效，请重新登录","function ipStateText(","admin/ip-pool/status","暂无待审批申请","function showFlash(","S.u.role === 'ADMIN' ? 'admin/branches' : 'branches'","admin/network-defaults","admin/branches/","admin/outlets/","filter-layout","确认删除支行","确认删除网点","不可编辑（已分配）","不可编辑（系统保留）"};
     for(String marker:added)if(!js.contains(marker))throw new AssertionError("phase-two frontend marker missing: "+marker);
     if(js.contains("data-v=\"imports\"")||js.contains("data-v='imports'"))throw new AssertionError("bulk import must not be a standalone navigation module");
     if(js.contains("window.prompt")||js.contains("window.confirm")||js.contains("window.alert"))throw new AssertionError("native prompt/confirm/alert must not remain");
+    if(!js.contains("this.getAttribute('data-index')"))throw new AssertionError("pool edit-state button must be included in delegated binding");
     if(!js.contains("if (S.u.mustChangePassword) return")||!js.contains("if (S.u.mustChangePassword && S.v !== 'home')"))throw new AssertionError("forced password navigation guard missing");
     if(!js.contains("该申请所属网点当前没有可分配 IP"))throw new AssertionError("available IP empty-state guidance is missing");
     if(js.contains("=>")||js.indexOf('`')>=0||js.matches("(?s).*\\b(?:const|let)\\b.*")||js.contains("?."))throw new AssertionError("frontend contains syntax outside the ES5 compatibility baseline");

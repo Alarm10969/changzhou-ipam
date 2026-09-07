@@ -10,3 +10,5 @@ $release=Join-Path $root 'release'
 $cp=((Get-ChildItem (Join-Path $release 'lib') -Filter *.jar | ForEach-Object FullName) + (Join-Path $release 'classes')) -join ';'
 & java -cp $cp com.icbc.changzhou.ipam.StageThreeSmokeTest
 if ($LASTEXITCODE -ne 0) { throw 'Stage 3 regression failed.' }
+& java -cp $cp com.icbc.changzhou.ipam.StageFourBaselineSmokeTest
+if ($LASTEXITCODE -ne 0) { throw 'Stage 4 baseline regression failed.' }
