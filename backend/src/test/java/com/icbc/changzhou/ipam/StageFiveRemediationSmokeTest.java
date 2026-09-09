@@ -41,7 +41,8 @@ public final class StageFiveRemediationSmokeTest {
     try(Connection c=open(db)){count(c,"SELECT count(*) FROM user_notification WHERE application_id="+app,1);}
     try(Connection c=open(db);Statement s=c.createStatement();ResultSet r=s.executeQuery("PRAGMA foreign_key_check")){if(r.next())throw new AssertionError("foreign key check failed after V014: "+r.getString(1));}
     String js=Files.readString(Paths.get("frontend","app.js"));
-    if(!js.contains("function poolV3")||!js.contains("item.state==='MANUAL_RESERVED'?' selected':'')")||!js.contains("function readOnlyDialog")||!js.contains("function applicationsV4")||!js.contains("id=\"candidateGo\"")||!js.contains("'确认分配'"))throw new AssertionError("active frontend remediation bindings missing");
+    String css=Files.readString(Paths.get("frontend","styles.css"));
+    if(!js.contains("function poolV3")||!js.contains("分配对象")||!js.contains("item.state==='MANUAL_RESERVED'?' selected':'')")||!js.contains("function readOnlyDialog")||!js.contains("function applicationsV4")||!js.contains("id=\"candidateGo\"")||!js.contains("'确认分配'")||!css.contains(".grid>.approval-workflow{width:100%;min-width:0}"))throw new AssertionError("active frontend remediation bindings missing");
     System.out.println("PASS|STAGE5_V014_PC_HISTORY_UI_REMEDIATION|"+work);
   }
   private static Map<String,Object> find(List<Map<String,Object>> rows,long id){for(Map<String,Object> row:rows)if(((Number)row.get("id")).longValue()==id)return row;throw new AssertionError("application not returned: "+id);}
