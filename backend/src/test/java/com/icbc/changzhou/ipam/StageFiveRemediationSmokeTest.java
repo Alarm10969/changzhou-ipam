@@ -14,6 +14,7 @@ public final class StageFiveRemediationSmokeTest {
     Object runtime=ctor.newInstance(db);java.lang.reflect.Method migrate=type.getDeclaredMethod("migrate");migrate.setAccessible(true);migrate.invoke(runtime);
     try(Connection c=open(db);Statement s=c.createStatement()){
       count(c,"SELECT count(*) FROM schema_history WHERE version='013'",1);
+      count(c,"SELECT count(*) FROM schema_history WHERE version='014'",1);
       count(c,"SELECT count(*) FROM pragma_table_info('ip_application') WHERE name='override_reason'",0);
       s.execute("INSERT INTO sys_user(username,password_hash,real_name,role,is_active,must_change_password,is_initial_admin) VALUES('admin5','"+org.mindrot.jbcrypt.BCrypt.hashpw("Stage5Demo9",org.mindrot.jbcrypt.BCrypt.gensalt(4))+"','管理员','ADMIN',1,0,1)");
       s.execute("INSERT INTO sys_user(username,password_hash,real_name,role,is_active,must_change_password,is_initial_admin) VALUES('tech5','x','科技管理员','TECH_ADMIN',1,0,0)");
@@ -37,10 +38,11 @@ public final class StageFiveRemediationSmokeTest {
     new PhaseThreeService(db).release(assignment,2L,"stage five release",UUID.randomUUID().toString());
     Map<String,Object> released=find(service.applications("APPROVED",""),app);
     if(!ip.equals(released.get("finalIpAddress"))||!"RELEASED".equals(released.get("assignmentStatus"))||released.get("releasedAt")==null)throw new AssertionError("released application must retain its actual historical IP");
-    try(Connection c=open(db);Statement s=c.createStatement();ResultSet r=s.executeQuery("PRAGMA foreign_key_check")){if(r.next())throw new AssertionError("foreign key check failed after V013: "+r.getString(1));}
+    try(Connection c=open(db)){count(c,"SELECT count(*) FROM user_notification WHERE application_id="+app,1);}
+    try(Connection c=open(db);Statement s=c.createStatement();ResultSet r=s.executeQuery("PRAGMA foreign_key_check")){if(r.next())throw new AssertionError("foreign key check failed after V014: "+r.getString(1));}
     String js=Files.readString(Paths.get("frontend","app.js"));
-    if(!js.contains("function poolV3")||!js.contains("item.state==='MANUAL_RESERVED'?' selected':'')")||!js.contains("function readOnlyDialog")||!js.contains("function applicationsV3"))throw new AssertionError("active frontend remediation bindings missing");
-    System.out.println("PASS|STAGE5_V013_PC_HISTORY_UI_REMEDIATION|"+work);
+    if(!js.contains("function poolV3")||!js.contains("item.state==='MANUAL_RESERVED'?' selected':'')")||!js.contains("function readOnlyDialog")||!js.contains("function applicationsV4")||!js.contains("id=\"candidateGo\"")||!js.contains("'确认分配'"))throw new AssertionError("active frontend remediation bindings missing");
+    System.out.println("PASS|STAGE5_V014_PC_HISTORY_UI_REMEDIATION|"+work);
   }
   private static Map<String,Object> find(List<Map<String,Object>> rows,long id){for(Map<String,Object> row:rows)if(((Number)row.get("id")).longValue()==id)return row;throw new AssertionError("application not returned: "+id);}
   private static Connection open(Path db)throws Exception{Connection c=DriverManager.getConnection("jdbc:sqlite:"+db);try(Statement s=c.createStatement()){s.execute("PRAGMA foreign_keys=ON");}return c;}

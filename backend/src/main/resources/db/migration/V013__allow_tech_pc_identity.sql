@@ -39,7 +39,8 @@ CREATE TABLE ip_application_v013 (
   FOREIGN KEY(rule_version_id) REFERENCES planning_rule_version(id) ON DELETE RESTRICT,
   CHECK(
     (asset_type='TECH' AND (
-      (device_type='PC' AND user_name IS NOT NULL AND user_unified_auth_id IS NOT NULL) OR
+      (device_type='PC' AND asset_code IS NULL AND user_name IS NOT NULL AND user_unified_auth_id IS NOT NULL) OR
+      (device_type='PC' AND asset_code IS NOT NULL AND user_name IS NULL AND user_unified_auth_id IS NULL) OR
       (device_type='OTHER' AND asset_code IS NOT NULL) OR
       (device_type IS NULL AND asset_code IS NOT NULL)
     )) OR

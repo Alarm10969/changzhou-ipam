@@ -13,4 +13,5 @@ if ($LASTEXITCODE -ne 0) { throw 'Stage 3 regression failed.' }
 & java -cp $cp com.icbc.changzhou.ipam.StageFourBaselineSmokeTest
 if ($LASTEXITCODE -ne 0) { throw 'Stage 4 baseline regression failed.' }
 & java -cp $cp com.icbc.changzhou.ipam.StageFiveRemediationSmokeTest
+& java -cp $cp com.icbc.changzhou.ipam.StageSixLegacyUpgradeSmokeTest
 if ($LASTEXITCODE -ne 0) { throw 'Stage 5 remediation regression failed.' }
