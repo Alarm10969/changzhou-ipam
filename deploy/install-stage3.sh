@@ -23,5 +23,5 @@ elif command -v wget >/dev/null 2>&1; then HEALTH=$(wget -qO- "http://127.0.0.1:
 else echo '服务已启动，但缺少 curl/wget，无法执行健康接口检查；请安装前补齐其中之一。' >&2; exit 2
 fi
 printf '%s' "$HEALTH" | grep -q '"status":"UP"' || { echo "健康接口未返回 UP：$HEALTH" >&2; exit 2; }
-grep -q '^3.3.1-v014-legacy-pc-and-approval-pagination$' "$BASE_DIR/VERSION.txt" || { echo '版本文件校验失败。' >&2; exit 2; }
+grep -q '^3.3.2-v015-soft-delete-reuse$' "$BASE_DIR/VERSION.txt" || { echo '版本文件校验失败。' >&2; exit 2; }
 echo '第三阶段已启动，健康接口与版本号校验通过。'

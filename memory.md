@@ -518,3 +518,10 @@
 - 原因：删除采用软删除，V001 的 `outlet(branch_id,code)`、`ip_range(branch_id,cidr)` 和 `ip_address_pool(ip_address)` 是表级唯一约束；`deleted_at` 不会解除这些约束，底层 SQLite 冲突未经业务转换而成为 HTTP 500。
 - 解决：新增 V015 受控重建三个表，保留原主键、软删除记录和全部历史关联，将表级唯一约束替换为仅约束 `deleted_at IS NULL` 可见记录的唯一索引；迁移禁用外键后使用独立事务，恢复外键并以 `foreign_key_check` 作为启动硬门。创建网点时，当前仍存在的同编号改为返回 HTTP 409 和明确提示。
 - 防回归措施：`StageSevenSoftDeleteReuseSmokeTest` 覆盖生成六类网段、删除网点、相同编号重建、相同生产网段再次生成、1,524 个 IP 重建、活跃重复编号拒绝和外键检查；HTTP 实测也覆盖创建、删除、重建及重复编号提示。
+
+### Bug：V015 包的安装脚本仍校验旧版本号
+
+- 现象：V015 包的 `VERSION.txt` 已更新，但安装脚本仍硬编码 V014；服务启动后会在版本校验失败并中止安装。
+- 原因：交付版本号更新没有同步到安装脚本的发布门禁。
+- 解决：安装脚本改为校验 `3.3.2-v015-soft-delete-reuse`，并重新制作 ZIP。
+- 防回归措施：Stage Seven 静态读取 `VERSION.txt` 首行和安装脚本，断言安装门禁校验的是同一版本号。

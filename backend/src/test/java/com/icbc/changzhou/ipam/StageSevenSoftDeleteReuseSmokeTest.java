@@ -35,6 +35,9 @@ public final class StageSevenSoftDeleteReuseSmokeTest {
     }
     String app=Files.readString(Paths.get("backend","src","main","java","com","icbc","changzhou","ipam","IpamApplication.java"));
     if(!app.contains("OUTLET_CODE_DUPLICATE"))throw new AssertionError("active duplicate must return a business error");
+    String version=Files.readString(Paths.get("VERSION.txt")).trim().split("\\R")[0];
+    String installer=Files.readString(Paths.get("deploy","install-stage3.sh"));
+    if(!installer.contains("grep -q '^"+version+"$'"))throw new AssertionError("installer version gate must match VERSION.txt");
     System.out.println("PASS|STAGE7_SOFT_DELETED_OUTLET_RANGE_POOL_REUSE|"+work);
   }
   private static JsonObject plan(long outlet){JsonObject x=new JsonObject();x.addProperty("branchId",1);x.addProperty("outletId",outlet);x.addProperty("productionCidr","108.56.0.0/24");return x;}
