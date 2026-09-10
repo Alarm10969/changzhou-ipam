@@ -15,6 +15,7 @@ public final class StageFiveRemediationSmokeTest {
     try(Connection c=open(db);Statement s=c.createStatement()){
       count(c,"SELECT count(*) FROM schema_history WHERE version='013'",1);
       count(c,"SELECT count(*) FROM schema_history WHERE version='014'",1);
+      count(c,"SELECT count(*) FROM schema_history WHERE version='015'",1);
       count(c,"SELECT count(*) FROM pragma_table_info('ip_application') WHERE name='override_reason'",0);
       s.execute("INSERT INTO sys_user(username,password_hash,real_name,role,is_active,must_change_password,is_initial_admin) VALUES('admin5','"+org.mindrot.jbcrypt.BCrypt.hashpw("Stage5Demo9",org.mindrot.jbcrypt.BCrypt.gensalt(4))+"','管理员','ADMIN',1,0,1)");
       s.execute("INSERT INTO sys_user(username,password_hash,real_name,role,is_active,must_change_password,is_initial_admin) VALUES('tech5','x','科技管理员','TECH_ADMIN',1,0,0)");

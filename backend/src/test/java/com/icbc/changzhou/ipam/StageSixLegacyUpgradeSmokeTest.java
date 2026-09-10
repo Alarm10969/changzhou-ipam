@@ -12,15 +12,15 @@ public final class StageSixLegacyUpgradeSmokeTest {
     Path work=Files.createTempDirectory("ipam-stage6-"),legacy=work.resolve("legacy-v012.db"),oldV13=work.resolve("old-v013.db"),invalid=work.resolve("invalid-v012.db");
     Object runtime=runtime(legacy);applyV012(runtime,legacy);seed(legacy,false);migrate(runtime);
     try(Connection c=open(legacy)){
-      expect(c,"SELECT count(*) FROM schema_history WHERE version='013'",1);expect(c,"SELECT count(*) FROM schema_history WHERE version='014'",1);
+      expect(c,"SELECT count(*) FROM schema_history WHERE version='013'",1);expect(c,"SELECT count(*) FROM schema_history WHERE version='014'",1);expect(c,"SELECT count(*) FROM schema_history WHERE version='015'",1);
       row(c,"SELECT asset_code,user_name,user_unified_auth_id FROM ip_application WHERE asset_code='LEGACY-PC-1'","LEGACY-PC-1",null,null);
       expect(c,"SELECT count(*) FROM ip_application WHERE asset_code='OTHER-1'",1);expect(c,"SELECT count(*) FROM ip_application WHERE asset_type='NON_TECH'",1);foreignKeys(c);
     }
-    migrate(runtime);try(Connection c=open(legacy)){expect(c,"SELECT count(*) FROM ip_application",3);expect(c,"SELECT count(*) FROM schema_history WHERE version='014'",1);foreignKeys(c);}
+    migrate(runtime);try(Connection c=open(legacy)){expect(c,"SELECT count(*) FROM ip_application",3);expect(c,"SELECT count(*) FROM schema_history WHERE version='014'",1);expect(c,"SELECT count(*) FROM schema_history WHERE version='015'",1);foreignKeys(c);}
 
     Object previous=runtime(oldV13);applyV012(previous,oldV13);seed(oldV13,false);rebuild(previous,oldV13,"013","allow technology PC applicant identity","/db/migration/V013__allow_tech_pc_identity.sql");
     try(Connection c=open(oldV13);PreparedStatement p=c.prepareStatement("UPDATE schema_history SET checksum=? WHERE version='013'")){p.setString(1,OLD_V013_CHECKSUM);p.executeUpdate();}
-    migrate(previous);try(Connection c=open(oldV13)){expect(c,"SELECT count(*) FROM schema_history WHERE version='014'",1);row(c,"SELECT asset_code,user_name,user_unified_auth_id FROM ip_application WHERE asset_code='LEGACY-PC-1'","LEGACY-PC-1",null,null);foreignKeys(c);}
+    migrate(previous);try(Connection c=open(oldV13)){expect(c,"SELECT count(*) FROM schema_history WHERE version='014'",1);expect(c,"SELECT count(*) FROM schema_history WHERE version='015'",1);row(c,"SELECT asset_code,user_name,user_unified_auth_id FROM ip_application WHERE asset_code='LEGACY-PC-1'","LEGACY-PC-1",null,null);foreignKeys(c);}
 
     Object bad=runtime(invalid);applyV012(bad,invalid);seed(invalid,true);boolean rejected=false;try{migrate(bad);}catch(InvocationTargetException expected){rejected=true;}if(!rejected)throw new AssertionError("incomplete PC identity must not be silently accepted");
     try(Connection c=open(invalid)){expect(c,"SELECT count(*) FROM schema_history WHERE version='013'",0);expect(c,"SELECT count(*) FROM ip_application",1);}
