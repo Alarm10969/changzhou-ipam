@@ -46,10 +46,10 @@ $env:IPAM_ADMIN_PASSWORD = 'ChangeMe_2026!'
 
 ## 麒麟一键安装
 
-将本次生成的 `ipam-stage3-v015-soft-delete-reuse-kylin-arm64-时间戳.zip` 复制到麒麟机既有目录 `/data/项目/IP管理系统` 后执行以下一条命令。它不会创建项目路径；会在原路径解压、校验发布文件和离线依赖、停止由本项目脚本管理的旧进程、备份已有数据库、执行 ARM64 预检，然后以普通用户身份启动。已有 `data/ipam.db` 不会被删除或重建。
+将本次生成的 `ipam-stage3-v016-soft-delete-reuse-kylin-arm64-时间戳.zip` 复制到麒麟机既有目录 `/data/项目/IP管理系统` 后执行以下一条命令。它不会创建项目路径；会在原路径解压、校验发布文件和离线依赖、停止由本项目脚本管理的旧进程、备份已有数据库、执行 ARM64 预检，然后以普通用户身份启动。已有 `data/ipam.db` 不会被删除或重建。
 
 ```sh
-cd '/data/项目/IP管理系统' && unzip -o './ipam-stage3-v015-soft-delete-reuse-kylin-arm64-YYYYMMDD-HHmm.zip' && sh './deploy/install-stage3.sh'
+cd '/data/项目/IP管理系统' && unzip -o './ipam-stage3-v016-soft-delete-reuse-kylin-arm64-YYYYMMDD-HHmm.zip' && sh './deploy/install-stage3.sh'
 ```
 
 ## 安全操作边界

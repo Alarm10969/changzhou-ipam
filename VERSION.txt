@@ -1,3 +1,3 @@
-3.3.2-v015-soft-delete-reuse
+3.3.3-v016-soft-delete-reuse
 Build target: Kylin ARM64 / Java 11
-Data schema: V001-V015 (soft-deleted outlet, address-range and IP keys may be safely reused)
+Data schema: V001-V016 (soft-deleted branch, outlet, address-range, IP and username keys may be safely reused)
