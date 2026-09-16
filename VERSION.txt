@@ -1,3 +1,3 @@
-3.4.1-v018-cross-range-reason
+3.4.2-v019-approval-pagination
 Build target: Kylin ARM64 / Java 11
-Data schema: V001-V018 (V017 preserves organisation masters, outlet directory and administrator accounts while resetting authorised demo business data for the simplified asset model; V018 records the mandatory reason for a cross-range approval)
+Data schema: V001-V018 (V017 preserves organisation masters, outlet directory and administrator accounts while resetting authorised demo business data for the simplified asset model; V018 records the mandatory reason for a cross-range approval; V019 is a frontend and regression-test correction with no schema change)

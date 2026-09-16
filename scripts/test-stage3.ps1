@@ -20,3 +20,5 @@ if ($LASTEXITCODE -ne 0) { throw 'Stage 6 legacy-upgrade regression failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Stage 7 soft-delete reuse regression failed.' }
 & java -cp $cp com.icbc.changzhou.ipam.StageEightBranchUserReuseSmokeTest
 if ($LASTEXITCODE -ne 0) { throw 'Stage 8 branch/user reuse regression failed.' }
+& node (Join-Path $root 'scripts\browser-approval-pagination-regression.js')
+if ($LASTEXITCODE -ne 0) { throw 'Browser approval paging/PING regression failed.' }
