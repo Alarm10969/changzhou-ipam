@@ -1,0 +1,73 @@
+package com.icbc.changzhou.ipam;
+
+import com.google.gson.JsonObject;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.sql.*;
+import java.util.*;
+import org.mindrot.jbcrypt.BCrypt;
+
+/** Fourth-stage regression for password policy, switch-port snapshots and role isolation. */
+public final class StageNinePhaseFourSmokeTest {
+  public static void main(String[] args) throws Exception {
+    assertPasswordPolicy();
+    Path work=Files.createTempDirectory("ipam-stage4-phase4-"),db=work.resolve("phase4.db");
+    Class<?> databaseType=Class.forName("com.icbc.changzhou.ipam.IpamApplication$Database");
+    java.lang.reflect.Constructor<?> ctor=databaseType.getDeclaredConstructor(Path.class);ctor.setAccessible(true);
+    Object runtime=ctor.newInstance(db);java.lang.reflect.Method migrate=databaseType.getDeclaredMethod("migrate");migrate.setAccessible(true);migrate.invoke(runtime);
+    try(Connection c=open(db);Statement s=c.createStatement()){
+      count(c,"SELECT count(*) FROM schema_history WHERE version='019'",1);
+      count(c,"SELECT count(*) FROM pragma_table_info('ip_assignment') WHERE name='switch_port'",1);
+      count(c,"SELECT count(*) FROM pragma_table_info('ip_release_event') WHERE name='switch_port'",1);
+      s.execute("INSERT INTO sys_user(username,password_hash,real_name,role,is_active,must_change_password,is_initial_admin) VALUES('admin9','"+BCrypt.hashpw("Admin9Pass",BCrypt.gensalt(4))+"','管理员','ADMIN',1,0,1)");
+      s.execute("INSERT INTO sys_user(username,password_hash,real_name,role,is_active,must_change_password,is_initial_admin) VALUES('tech9','"+BCrypt.hashpw("Tech9Pass",BCrypt.gensalt(4))+"','科技管理员','TECH_ADMIN',1,0,0)");
+      s.execute("INSERT INTO sys_user(username,password_hash,real_name,role,is_active,must_change_password,is_initial_admin) VALUES('legacy9','"+BCrypt.hashpw("legacy",BCrypt.gensalt(4))+"','旧密码用户','TECH_ADMIN',1,0,0)");
+      s.execute("INSERT INTO branch(code,name,is_active) VALUES('B9','第四阶段支行',1)");
+      s.execute("INSERT INTO outlet(branch_id,code,name,is_active) VALUES(1,'O9','第四阶段网点',1)");
+    }
+    assertHttpGuards(runtime,databaseType);
+    java.lang.reflect.Method login=databaseType.getDeclaredMethod("login",String.class,String.class);login.setAccessible(true);
+    Object weakLogin=login.invoke(runtime,"legacy9","legacy");
+    if(weakLogin==null||!weakLogin.toString().contains("Login"))throw new AssertionError("legacy compliant-login result missing");
+    try(Connection c=open(db)){try(PreparedStatement p=c.prepareStatement("SELECT must_change_password FROM sys_user WHERE username='legacy9'")){try(ResultSet r=p.executeQuery()){r.next();if(r.getInt(1)!=1)throw new AssertionError("weak legacy login must set must_change_password");}}}
+    PhaseFourService phase4=new PhaseFourService(db);JsonObject plan=new JsonObject();plan.addProperty("branchId",1);plan.addProperty("outletId",1);plan.addProperty("productionCidr","108.56.0.0/24");phase4.createPlan(plan,1L);
+    JsonObject asset=new JsonObject();asset.addProperty("assetType","NON_TECH");asset.addProperty("name","端口回归资产");asset.addProperty("requiresUser",0);asset.addProperty("requiresResourceCode",0);asset.addProperty("recommendedRangeType","OFFICE");asset.addProperty("active",1);long assetId=((Number)phase4.createAsset(asset,1L).get("id")).longValue();
+    JsonObject application=new JsonObject();application.addProperty("branchId",1);application.addProperty("outletId",1);application.addProperty("assetId",assetId);long firstApp=phase4.submitApplication(2L,application);long firstPool=firstCandidate(phase4,firstApp);phase4.approve(firstApp,firstPool,"OFFICE","端口首次分配",null,"GE0/0/1",1L);
+    long assignment=findAssignment(db,firstApp);Map<String,Object> adminApplication=find(phase4.applications("APPROVED",""),firstApp);if(!"GE0/0/1".equals(adminApplication.get("switchPort")))throw new AssertionError("admin application history must expose switch port");
+    Map<String,Object> techApplication=phase4.applicationsForApplicant("APPROVED","",2L).get(0);if(techApplication.containsKey("switchPort"))throw new AssertionError("tech application response must not expose switch port");
+    Map<String,Object> pool=poolItem(phase4,firstPool);long version=((Number)pool.get("assignmentVersion")).longValue();if(!"GE0/0/1".equals(pool.get("switchPort")))throw new AssertionError("pool must expose current switch port to admin");
+    Map<String,Object> changed=phase4.updateSwitchPort(firstPool,assignment,version," Eth-Trunk1 ",1L);if(!Boolean.TRUE.equals(changed.get("changed"))||!"Eth-Trunk1".equals(changed.get("switchPort")))throw new AssertionError("switch port edit must trim and persist");
+    Map<String,Object> same=phase4.updateSwitchPort(firstPool,assignment,((Number)changed.get("assignmentVersion")).longValue(),"Eth-Trunk1",1L);if(!Boolean.FALSE.equals(same.get("changed")))throw new AssertionError("same switch port must be a no-op");
+    boolean stale=false;try{phase4.updateSwitchPort(firstPool,assignment,version,"Gi0/0/9",1L);}catch(PhaseTwoService.Problem e){stale="ALLOCATION_STALE".equals(e.code)&&e.status==409;}if(!stale)throw new AssertionError("stale switch-port edit must be rejected");
+    Map<String,Object> cleared=phase4.updateSwitchPort(firstPool,assignment,((Number)changed.get("assignmentVersion")).longValue(),"  ",1L);if(!Boolean.TRUE.equals(cleared.get("changed"))||cleared.get("switchPort")!=null)throw new AssertionError("blank switch port must clear the current allocation");
+    phase4.updateSwitchPort(firstPool,assignment,((Number)cleared.get("assignmentVersion")).longValue(),"Eth-Trunk1",1L);
+    new PhaseThreeService(db).release(assignment,2L,"端口释放回归",UUID.randomUUID().toString());
+    try(Connection c=open(db)){try(PreparedStatement p=c.prepareStatement("SELECT switch_port FROM ip_release_event WHERE assignment_id=?")){p.setLong(1,assignment);try(ResultSet r=p.executeQuery()){if(!r.next()||!"Eth-Trunk1".equals(r.getString(1)))throw new AssertionError("release history must retain switch port snapshot");}}count(c,"SELECT count(*) FROM audit_log WHERE action='UPDATE_SWITCH_PORT'",3);}
+    String releaseCsv=new String(new PhaseThreeService(db).export("RELEASE","CSV",new LinkedHashSet<String>(Arrays.asList("switchPort")),Collections.<String,String>emptyMap(),1L),StandardCharsets.UTF_8);if(!releaseCsv.contains("switchPort")||!releaseCsv.contains("Eth-Trunk1"))throw new AssertionError("release export must whitelist switch port");
+    long secondApp=phase4.submitApplication(2L,application);long secondPool=firstCandidate(phase4,secondApp);if(secondPool!=firstPool)throw new AssertionError("released pool should be reusable");phase4.approve(secondApp,secondPool,"OFFICE","端口重新分配","","Gi0/0/2",1L);
+    try(Connection c=open(db)){count(c,"SELECT count(*) FROM ip_assignment WHERE ip_pool_id="+firstPool,2);count(c,"SELECT count(*) FROM ip_release_event WHERE assignment_id="+assignment+" AND switch_port='Eth-Trunk1'",1);}
+    List<Map<String,Object>> techAssignments=new PhaseThreeService(db).myAssignments(2L);if(!techAssignments.isEmpty()&&techAssignments.get(0).containsKey("switchPort"))throw new AssertionError("tech assignments must not expose switch port");
+    assertSwitchPortValidation();
+    System.out.println("PASS|STAGE9_V020_PASSWORD_POLICY_SWITCH_PORT_PRIVACY_RELEASE_REUSE|"+work);
+  }
+  private static void assertPasswordPolicy(){String[] valid={"Abcdefg1","A1bcdefghijk","P@ssword9"};for(String value:valid)if(!PasswordPolicy.isCompliant(value))throw new AssertionError("valid password rejected: "+value);String[] invalid={"shortA1","lowercase1","UPPERCASE1","NoDigitsHere"};for(String value:invalid)if(PasswordPolicy.isCompliant(value)||PasswordPolicy.validationMessage(value)==null)throw new AssertionError("invalid password accepted: "+value);if(!PasswordPolicy.validationMessage("abcdefg1").contains("ASCII 大写字母"))throw new AssertionError("uppercase-specific password message missing");if(!PasswordPolicy.validationMessage("ABCDEFG1").contains("ASCII 小写字母"))throw new AssertionError("lowercase-specific password message missing");if(!PasswordPolicy.validationMessage("Abcdefgh").contains("数字 0-9"))throw new AssertionError("digit-specific password message missing");if(!PasswordPolicy.validationMessage("Ab1").contains("至少 8 位"))throw new AssertionError("length-specific password message missing");if(!PasswordPolicy.validationMessage(repeat('A',73)+"b1").contains("不能超过 72 位"))throw new AssertionError("maximum-length password message missing");}
+  private static void assertSwitchPortValidation(){if(PhaseFourService.normalizeSwitchPort("  ")!=null)throw new AssertionError("blank switch port must normalize to null");if(!"GE0/0/1".equals(PhaseFourService.normalizeSwitchPort(" GE0/0/1 ")))throw new AssertionError("switch port trim failed");boolean longValue=false;try{PhaseFourService.normalizeSwitchPort(repeat('x',65));}catch(PhaseTwoService.Problem e){longValue="SWITCH_PORT_INVALID".equals(e.code);}if(!longValue)throw new AssertionError("long switch port must be rejected");boolean control=false;try{PhaseFourService.normalizeSwitchPort("GE0/0/1\n");}catch(PhaseTwoService.Problem e){control="SWITCH_PORT_INVALID".equals(e.code);}if(!control)throw new AssertionError("control character switch port must be rejected");}
+  private static void assertHttpGuards(Object runtime,Class<?> databaseType)throws Exception{
+    java.lang.reflect.Method login=databaseType.getDeclaredMethod("login",String.class,String.class);login.setAccessible(true);login.invoke(runtime,"legacy9","legacy");
+    java.lang.reflect.Method createSession=databaseType.getDeclaredMethod("createSession",long.class);createSession.setAccessible(true);
+    Object legacy=createSession.invoke(runtime,3L),tech=createSession.invoke(runtime,2L);
+    java.lang.reflect.Field tokenField=legacy.getClass().getDeclaredField("token"),csrfField=legacy.getClass().getDeclaredField("csrf");tokenField.setAccessible(true);csrfField.setAccessible(true);
+    String legacyToken=String.valueOf(tokenField.get(legacy)),legacyCsrf=String.valueOf(csrfField.get(legacy));String techToken=String.valueOf(tokenField.get(tech)),techCsrf=String.valueOf(csrfField.get(tech));
+    Class<?> appType=Class.forName("com.icbc.changzhou.ipam.IpamApplication");java.lang.reflect.Constructor<?> appCtor=appType.getDeclaredConstructor(databaseType,Path.class,boolean.class);appCtor.setAccessible(true);Object application=appCtor.newInstance(runtime,Paths.get("frontend").toAbsolutePath(),false);java.lang.reflect.Method handle=appType.getDeclaredMethod("handle",com.sun.net.httpserver.HttpExchange.class);handle.setAccessible(true);
+    com.sun.net.httpserver.HttpServer server=com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1",0),16);server.createContext("/",x->{try{handle.invoke(application,x);}catch(java.lang.reflect.InvocationTargetException e){throw new java.io.IOException(e.getCause());}catch(ReflectiveOperationException e){throw new java.io.IOException(e);}});server.start();
+    try{int port=server.getAddress().getPort();java.net.http.HttpClient client=java.net.http.HttpClient.newHttpClient();java.net.http.HttpResponse<String> me=request(client,port,"GET","/api/v1/auth/me",legacyToken,legacyCsrf,null);if(me.statusCode()!=200)throw new AssertionError("legacy account must retain auth/me access");java.net.http.HttpResponse<String> blocked=request(client,port,"GET","/api/v1/admin/dashboard",legacyToken,legacyCsrf,null);if(blocked.statusCode()!=403||!blocked.body().contains("PASSWORD_CHANGE_REQUIRED"))throw new AssertionError("legacy account business API must be blocked until password change");java.net.http.HttpResponse<String> forbidden=request(client,port,"PUT","/api/v1/admin/ip-pool/10/switch-port",techToken,techCsrf,"{\"assignmentId\":77,\"assignmentVersion\":1,\"switchPort\":\"Gi0/0/1\"}");if(forbidden.statusCode()!=403||!forbidden.body().contains("FORBIDDEN"))throw new AssertionError("tech admin must not call admin switch-port API");}finally{server.stop(0);}
+  }
+  private static java.net.http.HttpResponse<String> request(java.net.http.HttpClient client,int port,String method,String path,String token,String csrf,String body)throws Exception{java.net.http.HttpRequest.Builder builder=java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:"+port+path)).header("Cookie","IPAM_SESSION="+token).header("X-CSRF-Token",csrf);if(body==null)builder.method(method,java.net.http.HttpRequest.BodyPublishers.noBody());else builder.header("Content-Type","application/json").method(method,java.net.http.HttpRequest.BodyPublishers.ofString(body));return client.send(builder.build(),java.net.http.HttpResponse.BodyHandlers.ofString());}
+  private static String repeat(char value,int count){StringBuilder out=new StringBuilder();for(int i=0;i<count;i++)out.append(value);return out.toString();}
+  private static long firstCandidate(PhaseFourService service,long application)throws Exception{Map<String,Object> result=service.candidates(application,"OFFICE","",1);List<?> items=(List<?>)result.get("items");if(items.isEmpty())throw new AssertionError("candidate IP missing");return ((Number)((Map<?,?>)items.get(0)).get("id")).longValue();}
+  private static long findAssignment(Path db,long application)throws Exception{try(Connection c=open(db);PreparedStatement p=c.prepareStatement("SELECT id FROM ip_assignment WHERE application_id=?")){p.setLong(1,application);try(ResultSet r=p.executeQuery()){if(!r.next())throw new AssertionError("assignment missing");return r.getLong(1);}}}
+  private static Map<String,Object> poolItem(PhaseFourService service,long poolId)throws Exception{Map<String,Object> page=service.pool(null,null,"OFFICE","",1);for(Map<String,Object> item:(List<Map<String,Object>>)page.get("items"))if(((Number)item.get("id")).longValue()==poolId)return item;throw new AssertionError("pool item missing");}
+  private static Map<String,Object> find(List<Map<String,Object>> rows,long id){for(Map<String,Object> row:rows)if(((Number)row.get("id")).longValue()==id)return row;throw new AssertionError("row missing: "+id);}
+  private static Connection open(Path db)throws Exception{Connection c=DriverManager.getConnection("jdbc:sqlite:"+db);try(Statement s=c.createStatement()){s.execute("PRAGMA foreign_keys=ON");}return c;}
+  private static void count(Connection c,String sql,long expected)throws Exception{try(ResultSet r=c.createStatement().executeQuery(sql)){r.next();if(r.getLong(1)!=expected)throw new AssertionError(sql+" expected="+expected+" actual="+r.getLong(1));}}
+}
