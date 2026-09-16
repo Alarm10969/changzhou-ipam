@@ -70,7 +70,7 @@ public final class IpamApplication {
     if ("auth/me".equals(path) && "GET".equals(method)) { respond(x, 200, p.publicView()); return; }
     if ("auth/logout".equals(path) && "POST".equals(method)) { db.revokeSession(p.sessionId); audit(p, requestId,"LOGOUT","SESSION",String.valueOf(p.sessionId),"SUCCESS",null); expireCookie(x); respond(x,204,null); return; }
     if ("auth/change-password".equals(path) && "POST".equals(method)) { changePassword(x,p,requestId); return; }
-    if (p.mustChangePassword) throw new ApiError(403,"PASSWORD_CHANGE_REQUIRED","该账号必须先修改初始或重置后的密码。");
+    if (p.mustChangePassword) throw new ApiError(403,"PASSWORD_CHANGE_REQUIRED","请先修改密码后继续使用业务功能。");
     if ("my-assignments".equals(path) && "GET".equals(method)) { if(!"TECH_ADMIN".equals(p.role))throw new ApiError(403,"FORBIDDEN","仅科技管理员可查询本人 IP。"); respond(x,200,map("items",phaseThree.myAssignments(p.id))); return; }
     if (path.matches("my-assignments/\\d+/release") && "POST".equals(method)) { if(!"TECH_ADMIN".equals(p.role))throw new ApiError(403,"FORBIDDEN","仅科技管理员可释放本人 IP。"); JsonObject b=body(x); respond(x,200,phaseThree.release(parseId(path),p.id,optional(b,"reason",500),requestId)); return; }
     if ("notifications".equals(path) && "GET".equals(method)) { respond(x,200,map("items",phaseThree.notifications(p.id))); return; }
@@ -169,7 +169,7 @@ public final class IpamApplication {
     if (path.matches("ip-pool/\\d+/switch-port") && "PUT".equals(m)) { JsonObject b=body(x); String versionKey=b.has("assignmentVersion")?"assignmentVersion":"version"; respond(x,200,phaseFour.updateSwitchPort(parseId(path),number(b,"assignmentId"),number(b,versionKey),optionalSwitchPort(b),p.id)); return; }
     if (path.matches("ip-pool/\\d+") && "PUT".equals(m)) { updatePool(x,p,requestId,parseId(path)); return; }
     if (path.matches("ip-pool/\\d+/reachability") && "POST".equals(m)) { respond(x,200,phaseFour.ping(parseId(path),p.id)); return; }
-    if ("audit".equals(path) && "GET".equals(m)) { respond(x,200,map("items",db.rows("SELECT a.id,a.action,a.target_type AS targetType,a.target_id AS targetId,a.result,a.created_at AS createdAt,u.username AS actor FROM audit_log a LEFT JOIN sys_user u ON u.id=a.actor_user_id ORDER BY a.id DESC LIMIT 200"))); return; }
+    if ("audit".equals(path) && "GET".equals(m)) { respond(x,200,map("items",db.auditRows())); return; }
     throw new ApiError(404,"NOT_FOUND","管理接口不存在。");
   }
 
@@ -296,6 +296,31 @@ public final class IpamApplication {
     void change(String sql,Object...values)throws Exception{try(Connection c=open();PreparedStatement p=c.prepareStatement(sql)){bind(p,values);if(p.executeUpdate()!=1)throw new ApiError(404,"RESOURCE_NOT_FOUND","记录不存在。");}}
     List<Map<String,Object>> rows(String sql)throws Exception{try(Connection c=open();Statement p=c.createStatement();ResultSet r=p.executeQuery(sql)){List<Map<String,Object>> out=new ArrayList<>();ResultSetMetaData md=r.getMetaData();while(r.next()){Map<String,Object> m=new LinkedHashMap<>();for(int i=1;i<=md.getColumnCount();i++)m.put(md.getColumnLabel(i),r.getObject(i));out.add(m);}return out;}}
     List<Map<String,Object>> users()throws Exception{return rows("SELECT u.id,u.username,u.real_name AS realName,u.role,u.is_active AS active,u.is_initial_admin AS initialAdmin,u.deleted_at AS deletedAt,u.must_change_password AS mustChangePassword,u.locked_until AS lockedUntil,u.created_at AS createdAt,creator.username AS creator FROM sys_user u LEFT JOIN sys_user creator ON creator.id=u.created_by WHERE u.role IN ('ADMIN','TECH_ADMIN') ORDER BY u.deleted_at IS NOT NULL,u.role,u.username");}
+    List<Map<String,Object>> auditRows()throws Exception{
+      List<Map<String,Object>> out=rows("SELECT a.id,a.action,a.target_type AS targetType,a.target_id AS targetId,a.result,a.created_at AS createdAt,u.username AS actor,a.detail_json AS detailJson FROM audit_log a LEFT JOIN sys_user u ON u.id=a.actor_user_id ORDER BY a.id DESC LIMIT 200");
+      for(Map<String,Object> row:out){
+        if("UPDATE_SWITCH_PORT".equals(row.get("action"))){
+          Map<String,Object> detail=safeAuditDetail(row.get("detailJson"));
+          row.put("switchPortBefore",safeAuditPort(detail.get("before")));
+          row.put("switchPortAfter",safeAuditPort(detail.get("after")));
+        }
+        row.remove("detailJson");
+      }
+      return out;
+    }
+    private static Map<String,Object> safeAuditDetail(Object raw){
+      Map<String,Object> result=new LinkedHashMap<>();
+      try{
+        JsonElement parsed=JsonParser.parseString(raw==null?"":String.valueOf(raw));
+        if(parsed.isJsonObject()){
+          JsonObject obj=parsed.getAsJsonObject();
+          if(obj.has("before")&&obj.get("before").isJsonPrimitive()&&obj.get("before").getAsJsonPrimitive().isString())result.put("before",obj.get("before").getAsString());
+          if(obj.has("after")&&obj.get("after").isJsonPrimitive()&&obj.get("after").getAsJsonPrimitive().isString())result.put("after",obj.get("after").getAsString());
+        }
+      }catch(Exception ignored){}
+      return result;
+    }
+    private static String safeAuditPort(Object value){if(value==null)return "—";String text=String.valueOf(value);return text.trim().isEmpty()?"—":text;}
     void audit(Long actor,String req,String action,String type,String target,String result,String detail)throws Exception{try(Connection c=open();PreparedStatement p=c.prepareStatement("INSERT INTO audit_log(request_id,actor_user_id,action,target_type,target_id,result,detail_json) VALUES(?,?,?,?,?,?,?)")){p.setString(1,req);if(actor==null)p.setNull(2,Types.INTEGER);else p.setLong(2,actor);p.setString(3,action);p.setString(4,type);p.setString(5,target);p.setString(6,result);p.setString(7,detail);p.executeUpdate();}}
     private static Principal user(ResultSet r)throws SQLException{Principal p=new Principal();p.id=r.getLong("id");p.username=r.getString("username");p.realName=r.getString("real_name");p.role=r.getString("role");p.passwordHash=r.getString("password_hash");p.mustChangePassword=r.getInt("must_change_password")==1;return p;}
     private static void bind(PreparedStatement p,Object...v)throws SQLException{for(int i=0;i<v.length;i++){Object x=v[i];if(x==null)p.setNull(i+1,Types.VARCHAR);else if(x instanceof Long)p.setLong(i+1,(Long)x);else if(x instanceof Integer)p.setInt(i+1,(Integer)x);else p.setString(i+1,String.valueOf(x));}}

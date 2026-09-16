@@ -20,6 +20,7 @@ function responseFor(url, method, body) {
     return input.username === 'tech' ? { id: 2, username: 'tech', realName: '科技管理员', role: 'TECH_ADMIN', mustChangePassword: false, csrfToken: 'tech-csrf' } : { id: 1, username: 'admin', realName: '管理员', role: 'ADMIN', mustChangePassword: false, csrfToken: 'admin-csrf' };
   }
   if (name === 'admin/dashboard') return { branchCount: 1, outletCount: 1, unboundOutletCount: 0, availableIpCount: 253, pendingCount: 1 };
+  if (name === 'admin/audit') return { items: [{ id: 9, action: 'UPDATE_SWITCH_PORT', targetType: 'IP_ASSIGNMENT', targetId: '77', result: 'SUCCESS', createdAt: '2026-09-16T00:00:00Z', actor: 'admin', switchPortBefore: 'GE0/0/1', switchPortAfter: 'Eth-Trunk1', detailJson: '{"password":"SHOULD_NOT_RENDER"}' }] };
   if (name === 'admin/outlets' || name === 'outlets' || name === 'branches') return { items: [{ id: 1, branchId: 1, branchName: '回归支行', outletName: '回归网点', name: '回归网点', code: 'O4', active: 1, rangeId: 1 }] };
   if (name === 'asset-categories') return { items: [] };
   if (name.indexOf('admin/applications?') === 0) return { items: [{ id: 42, status: 'PENDING', createdAt: '2026-09-16T00:00:00Z', applicantUsername: 'tech', applicantName: '科技管理员', branchName: '回归支行', outletName: '回归网点', assetType: 'NON_TECH', assetName: '端口回归资产', requiresUser: 0, requiresResourceCode: 0, recommendedRangeType: 'OFFICE' }] };
@@ -74,8 +75,12 @@ async function main() {
   await until(() => evaluate("!!document.querySelector('#switchPort')"), 'pool switch-port dialog missing');
   await evaluate("document.querySelector('#switchPort').value='Eth-Trunk1';document.querySelector('#switchPort').dispatchEvent(new Event('input'));document.querySelector('#saveEdit').click();true");
   await until(() => evaluate("!document.querySelector('#editModal')"), 'pool switch-port dialog did not close');
+  await until(() => evaluate("document.querySelector('#notice') && document.querySelector('#notice').textContent.indexOf('交换机端口已保存')>=0"), 'pool switch-port success feedback missing');
   const poolUpdate = await evaluate("window.__phase4Requests.find(function(x){return x.path.indexOf('admin/ip-pool/10/switch-port')>=0;})"); if (!poolUpdate || !poolUpdate.body || poolUpdate.body.switchPort !== 'Eth-Trunk1' || poolUpdate.body.assignmentVersion !== 3) fail('pool switch-port request did not carry guarded update');
   const narrowPool = await evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"); if (!narrowPool) fail('pool page overflows at narrow width');
+  await evaluate("document.querySelector('[data-v=audit]').click();true");
+  await until(() => evaluate("document.querySelector('#table') && document.querySelector('#table').textContent.indexOf('Eth-Trunk1')>=0"), 'audit switch-port summary missing');
+  const auditSafe = await evaluate("document.body.textContent.indexOf('SHOULD_NOT_RENDER')<0 && document.body.textContent.indexOf('detailJson')<0"); if (!auditSafe) fail('audit page rendered raw detail data');
   await evaluate("document.querySelector('#out').click();true");
   await until(() => evaluate("!!document.querySelector('#username')"), 'logout did not return to login');
   await evaluate("document.querySelector('#username').value='tech';document.querySelector('#password').value='test';document.querySelector('#go').click();true");
@@ -87,7 +92,7 @@ async function main() {
   await evaluate("document.querySelector('[data-v=notifications]').click();true"); await until(() => evaluate("document.querySelector('#table') && document.querySelector('#table').textContent.indexOf('管理员已处理')>=0"), 'tech notification page missing');
   if (await evaluate("document.body.textContent.indexOf('交换机端口')<0") === false) fail('tech notification page leaked switch port');
   const leakedRequest = await evaluate("window.__phase4Requests.some(function(x){return JSON.stringify(x.body||{}).indexOf('switchPort')>=0 && x.path.indexOf('admin/')<0;})"); if (leakedRequest) fail('tech request carried switchPort field');
-  console.log('PASS|BROWSER_PHASE4|password-hints|approval-port|pool-port|narrow-screen|tech-port-isolation');
+  console.log('PASS|BROWSER_PHASE4|password-hints|approval-port|pool-port-feedback|audit-summary|narrow-screen|tech-port-isolation');
   ws.close();
 }
 main().catch(error => { console.error(error.stack || error); process.exitCode = 1; }).finally(() => { if (browser) browser.kill(); if (server) server.close(); });
