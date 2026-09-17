@@ -44,7 +44,7 @@ function responseFor(url, method, body) {
     return { pool: { id: 11, ipAddress: '108.56.0.11', sourceState: 'AVAILABLE', state: 'AVAILABLE', branchName: '回归支行', outletName: '回归网点', cidr: '108.56.0.0/24', rangeId: 1 }, assets: [{ id: 1, assetType: 'TECH', name: '服务器', requiresUser: 0, requiresResourceCode: 1 }, { id: 2, assetType: 'NON_TECH', name: '摄像机', requiresUser: 1, requiresResourceCode: 0 }], responsibleTechAdmins: [{ id: 2, username: 'tech', realName: '科技管理员' }] };
   }
   if (name.indexOf('admin/ip-ranges/1/gateway-options') === 0) return { range: { id: 1, cidr: '108.56.0.0/24', gateway: '108.56.0.1', branchName: '回归支行', outletName: '回归网点' }, items: [{ id: 11, ipAddress: '108.56.0.11', state: 'AVAILABLE', eligible: true }, { id: 12, ipAddress: '108.56.0.12', state: 'DISABLED', eligible: true }, { id: 13, ipAddress: '108.56.0.13', state: 'MANUAL_RESERVED', eligible: true }, { id: 14, ipAddress: '108.56.0.1', state: 'SYSTEM_RESERVED', eligible: false }] };
-  if (name.indexOf('admin/ip-ranges/1/gateway') === 0) { if (method === 'POST') window.__gatewaySaved = true; return { changed: true, oldGateway: '108.56.0.1', gateway: '108.56.0.12', oldState: 'AVAILABLE', newState: 'SYSTEM_RESERVED' }; }
+  if (name.indexOf('admin/ip-ranges/1/gateway') === 0) { if (method === 'POST') { window.__gatewaySaved = true; if (window.__gatewayStale) return { __status: 409, code: 'GATEWAY_STALE', message: '当前网关已被其他管理员更新，请刷新网关选项后重新确认。' }; } return { changed: true, oldGateway: '108.56.0.1', gateway: '108.56.0.12', oldState: 'AVAILABLE', newState: 'SYSTEM_RESERVED' }; }
   if (name.indexOf('/reachability') > 0) return { ipAddress: '108.56.0.10', status: 'NO_REPLY', elapsedMs: 1 };
   if (name === 'applications') return { items: [{ id: 42, status: 'APPROVED', createdAt: '2026-09-16T00:00:00Z', branchName: '回归支行', outletName: '回归网点', assetType: 'NON_TECH', assetName: '端口回归资产', finalIpAddress: '108.56.0.10', finalRangeType: 'OFFICE', switchPort: 'SECRET-PORT' }] };
   if (name === 'my-assignments') return { items: [{ id: 77, status: 'ASSIGNED', assignedAt: '2026-09-16T00:00:00Z', ipAddress: '108.56.0.10', subnetMask: '255.255.255.0', gateway: '108.56.0.1', branchName: '回归支行', outletName: '回归网点', assetType: 'NON_TECH', switchPort: 'SECRET-PORT' }] };
@@ -59,7 +59,7 @@ window.addEventListener('unhandledrejection',function(e){window.__phase4Errors.p
 window.XMLHttpRequest=function(){this.readyState=0;this.status=0;this.responseText='';this.headers={};};
 window.XMLHttpRequest.prototype.open=function(method,url){this.method=method;this.url=url;this.readyState=1;};
 window.XMLHttpRequest.prototype.setRequestHeader=function(k,v){this.headers[k]=v;};
-window.XMLHttpRequest.prototype.send=function(data){var x=this,u=x.url,p=u.replace(/^.*\\/api\\/v1\\//,'');var record={path:p,method:x.method,body:null};try{record.body=data?JSON.parse(data):null;}catch(ignore){}window.__phase4Requests.push(record);var result=window.__phase4Response(u,x.method,data);setTimeout(function(){x.status=200;x.responseText=JSON.stringify(result);x.readyState=4;if(x.onreadystatechange)x.onreadystatechange();},0);};
+window.XMLHttpRequest.prototype.send=function(data){var x=this,u=x.url,p=u.replace(/^.*\\/api\\/v1\\//,'');var record={path:p,method:x.method,body:null};try{record.body=data?JSON.parse(data):null;}catch(ignore){}window.__phase4Requests.push(record);var result=window.__phase4Response(u,x.method,data),status=result&&result.__status?result.__status:200;setTimeout(function(){x.status=status;x.responseText=JSON.stringify(result);x.readyState=4;if(x.onreadystatechange)x.onreadystatechange();},0);};
 `; }
 function makeServer() { return new Promise(resolve => { server = http.createServer((req, res) => { let file = req.url.split('?')[0]; if (file === '/') file = '/index.html'; const target = path.resolve(staticRoot, '.' + file); if (!target.startsWith(staticRoot) || !fs.existsSync(target)) { res.writeHead(404); res.end(); return; } const ext = path.extname(target); res.writeHead(200, { 'Content-Type': ext === '.js' ? 'application/javascript' : ext === '.css' ? 'text/css' : 'text/html' }); fs.createReadStream(target).pipe(res); }); server.listen(webPort, '127.0.0.1', resolve); }); }
 async function json(url) { const response = await fetch(url); return response.json(); }
@@ -113,8 +113,14 @@ async function main() {
   await until(() => evaluate("!!document.querySelector('#newGateway')"), 'gateway adjustment dialog missing');
   await evaluate("document.querySelector('#newGateway').value='108.56.0.12';document.querySelector('#gatewayNote').value='路由器切换';document.querySelector('#confirmSystem').click();true");
   await until(() => evaluate("!document.querySelector('#systemModal')"), 'gateway adjustment dialog did not close');
-  const gatewayRequest = await evaluate("window.__phase4Requests.find(function(x){return x.path.indexOf('admin/ip-ranges/1/gateway')>=0 && x.method==='POST';})"); if (!gatewayRequest || !gatewayRequest.body || gatewayRequest.body.newGateway !== '108.56.0.12') fail('gateway adjustment request did not carry target');
+  const gatewayRequest = await evaluate("window.__phase4Requests.find(function(x){return x.path.indexOf('admin/ip-ranges/1/gateway')>=0 && x.method==='POST';})"); if (!gatewayRequest || !gatewayRequest.body || gatewayRequest.body.newGateway !== '108.56.0.12' || gatewayRequest.body.expectedGateway !== '108.56.0.1') fail('gateway adjustment request did not carry guarded target');
   const manualFeedback = await evaluate("document.querySelector('#notice') && document.querySelector('#notice').textContent.indexOf('网关已调整')>=0"); if (!manualFeedback) fail('gateway success feedback missing');
+  await evaluate("window.__gatewayStale=true;document.querySelector('[data-gateway]').click();true");
+  await until(() => evaluate("!!document.querySelector('#newGateway')"), 'stale gateway dialog missing');
+  await evaluate("document.querySelector('#newGateway').value='108.56.0.13';document.querySelector('#confirmSystem').click();true");
+  await until(() => evaluate("!!document.querySelector('#gatewayRefresh')"), 'stale gateway refresh prompt missing');
+  const staleFeedback = await evaluate("document.querySelector('#gatewayReview').textContent.indexOf('已被其他管理员更新')>=0 && document.querySelector('#gatewayReview').textContent.indexOf('刷新')>=0"); if (!staleFeedback) fail('stale gateway conflict feedback missing');
+  await evaluate("document.querySelector('#gatewayRefresh').click();true");
   const narrowPool = await evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"); if (!narrowPool) fail('pool page overflows at narrow width');
   await evaluate("document.querySelector('[data-v=audit]').click();true");
   await until(() => evaluate("document.querySelector('#table') && document.querySelector('#table').textContent.indexOf('Eth-Trunk1')>=0"), 'audit switch-port summary missing');
@@ -141,7 +147,7 @@ async function main() {
   await evaluate("document.querySelector('[data-v=notifications]').click();true"); await until(() => evaluate("document.querySelector('#table') && document.querySelector('#table').textContent.indexOf('管理员已处理')>=0"), 'tech notification page missing');
   if (await evaluate("document.body.textContent.indexOf('交换机端口')<0") === false) fail('tech notification page leaked switch port');
   const leakedRequest = await evaluate("window.__phase4Requests.some(function(x){return JSON.stringify(x.body||{}).indexOf('switchPort')>=0 && x.path.indexOf('admin/')<0;})"); if (leakedRequest) fail('tech request carried switchPort field');
-  console.log('PASS|BROWSER_PHASE4|v022-header|password-hints|approval-port|pool-port-feedback|manual-assignment|gateway-adjustment|audit-summary|range-conflict-suggestion|narrow-screen|tech-port-isolation');
+  console.log('PASS|BROWSER_PHASE4|v022-header|password-hints|approval-port|pool-port-feedback|manual-assignment|gateway-adjustment|gateway-stale-refresh|audit-summary|range-conflict-suggestion|narrow-screen|tech-port-isolation');
   ws.close();
 }
 main().catch(error => { console.error(error.stack || error); process.exitCode = 1; }).finally(() => { if (browser) browser.kill(); if (server) server.close(); });

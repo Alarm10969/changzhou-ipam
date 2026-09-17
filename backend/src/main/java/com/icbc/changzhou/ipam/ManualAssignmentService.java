@@ -70,15 +70,16 @@ final class ManualAssignmentService {
   }
 
   Map<String,Object> adjustGateway(long rangeId,JsonObject b,long actor)throws Exception{
-    String target=required(b,"newGateway",45),note=optional(b,"note",500);
+    String target=required(b,"newGateway",45),expected=required(b,"expectedGateway",45),note=optional(b,"note",500);
     validIp(target);
+    validIp(expected);
     synchronized(PhaseTwoService.WRITE_LOCK){
       try(Connection c=open()){
         c.setAutoCommit(false);
         try{
           Map<String,Object> range=one(c,"SELECT r.id,r.cidr,r.gateway,r.range_type AS rangeType,b.name AS branchName,o.name AS outletName FROM ip_range r JOIN branch b ON b.id=r.branch_id LEFT JOIN outlet o ON o.id=r.outlet_id WHERE r.id=? AND r.deleted_at IS NULL AND b.deleted_at IS NULL AND (o.id IS NULL OR o.deleted_at IS NULL)",rangeId);
           if(range==null)throw problem(404,"IP_RANGE_NOT_FOUND","地址段不存在或已删除。");
-          String old=value(range.get("gateway"));if(old.equals(target)){c.commit();return map("changed",false,"gateway",old,"rangeId",rangeId);}
+          String old=value(range.get("gateway"));if(!old.equals(expected))throw problem(409,"GATEWAY_STALE","当前网关已被其他管理员更新，请刷新网关选项后重新确认。");if(old.equals(target)){c.commit();return map("changed",false,"gateway",old,"rangeId",rangeId);}
           PhaseFourService.Net net=PhaseFourService.Net.parse(value(range.get("cidr")));if(!net.contains(PhaseFourService.Net.ipv4(target)))throw problem(400,"GATEWAY_OUT_OF_RANGE","新网关必须位于当前地址段内。");
           Map<String,Object> targetPool=one(c,"SELECT p.id,p.ip_address AS ipAddress,p.is_active AS active,p.is_reserved AS reserved,p.reservation_reason AS reservationReason,d.id AS assignmentId FROM ip_address_pool p LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' WHERE p.ip_range_id=? AND p.ip_address=? AND p.deleted_at IS NULL",rangeId,target);
           if(targetPool==null)throw problem(400,"GATEWAY_TARGET_NOT_FOUND","新网关必须是当前地址段中的主机地址。");
