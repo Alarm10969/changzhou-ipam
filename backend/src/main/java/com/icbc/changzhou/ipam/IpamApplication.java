@@ -31,11 +31,12 @@ public final class IpamApplication {
   private final PhaseTwoService phaseTwo;
   private final PhaseThreeService phaseThree;
   private final PhaseFourService phaseFour;
+  private final ManualAssignmentService manualAssignment;
   private final OutletDirectoryService outletDirectory;
   private final Path staticDir;
   private final boolean secureCookie;
 
-  private IpamApplication(Database db, Path staticDir, boolean secureCookie) throws IOException { this.db = db; this.phaseTwo = new PhaseTwoService(db.file); this.phaseThree = new PhaseThreeService(db.file); this.phaseFour = new PhaseFourService(db.file); this.outletDirectory = new OutletDirectoryService(db.file); this.staticDir = staticDir; this.secureCookie = secureCookie; }
+  private IpamApplication(Database db, Path staticDir, boolean secureCookie) throws IOException { this.db = db; this.phaseTwo = new PhaseTwoService(db.file); this.phaseThree = new PhaseThreeService(db.file); this.phaseFour = new PhaseFourService(db.file); this.manualAssignment = new ManualAssignmentService(db.file); this.outletDirectory = new OutletDirectoryService(db.file); this.staticDir = staticDir; this.secureCookie = secureCookie; }
 
   public static void main(String[] args) throws Exception {
     Path data = Paths.get(env("IPAM_DATA_DIR", "data")).toAbsolutePath().normalize();
@@ -130,7 +131,7 @@ public final class IpamApplication {
     if (path.matches("outlet-plan-import/\\d+/confirm") && "POST".equals(m)) { respond(x,200,phaseFour.confirmPlanImport(parseId(path),p.id)); return; }
     if ("resource-overview".equals(path) && "GET".equals(m)) { respond(x,200,phaseThree.overview(query(x,"branchId"),query(x,"outletId"),parsePage(query(x,"branchPage")),parsePage(query(x,"outletPage")))); return; }
     if ("release-history".equals(path) && "GET".equals(m)) { respond(x,200,map("items",phaseThree.releases(query(x,"q"),query(x,"branch"),query(x,"outlet"),query(x,"assetType"),query(x,"from"),query(x,"to")))); return; }
-    if ("exports".equals(path) && "POST".equals(m)) { JsonObject b=body(x); String type=required(b,"type",32),format=required(b,"format",8); Set<String> fields=new LinkedHashSet<>();if(b.has("fields")&&b.get("fields").isJsonArray())for(JsonElement e:b.getAsJsonArray("fields"))fields.add(e.getAsString());Map<String,String> filters=new LinkedHashMap<>();if(b.has("filters")&&b.get("filters").isJsonObject())for(Map.Entry<String,JsonElement> e:b.getAsJsonObject("filters").entrySet())filters.put(e.getKey(),e.getValue().getAsString()); byte[] data=phaseThree.export(type,format,fields,filters,p.id);String ext="XLSX".equals(format)?"xlsx":"csv";binary(x,200,data,"XLSX".equals(format)?"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":"text/csv; charset=utf-8","attachment; filename=ipam-"+type.toLowerCase()+"-"+Instant.now().toEpochMilli()+"."+ext); return; }
+    if ("exports".equals(path) && "POST".equals(m)) { JsonObject b=body(x); String type=required(b,"type",32),format=required(b,"format",8); Set<String> fields=new LinkedHashSet<>();if(b.has("fields")&&b.get("fields").isJsonArray())for(JsonElement e:b.getAsJsonArray("fields"))fields.add(e.getAsString());Map<String,String> filters=new LinkedHashMap<>();if(b.has("filters")&&b.get("filters").isJsonObject())for(Map.Entry<String,JsonElement> e:b.getAsJsonObject("filters").entrySet())filters.put(e.getKey(),e.getValue().getAsString()); byte[] data=phaseThree.exportManualAware(type,format,fields,filters,p.id);String ext="XLSX".equals(format)?"xlsx":"csv";binary(x,200,data,"XLSX".equals(format)?"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":"text/csv; charset=utf-8","attachment; filename=ipam-"+type.toLowerCase()+"-"+Instant.now().toEpochMilli()+"."+ext); return; }
     if ("applications".equals(path) && "GET".equals(m)) { respond(x,200,map("items",phaseFour.applications(query(x,"status"),query(x,"q")))); return; }
     if (path.matches("applications/\\d+/reject") && "POST".equals(m)) { phaseTwo.reject(parseId(path),p.id,required(body(x),"reason",500)); audit(p,requestId,"REJECT_APPLICATION","APPLICATION",String.valueOf(parseId(path)),"SUCCESS",null); respond(x,204,null); return; }
     if (path.matches("applications/\\d+/approve") && "POST".equals(m)) { JsonObject b=body(x); phaseFour.approve(parseId(path),number(b,"poolId"),optional(b,"finalRangeType",32),optional(b,"approvalOpinion",500),optional(b,"overrideReason",500),optionalSwitchPort(b),p.id); respond(x,204,null); return; }
@@ -161,11 +162,15 @@ public final class IpamApplication {
     if (path.matches("outlets/\\d+") && "DELETE".equals(m)) { respond(x,200,phaseTwo.deleteOutlet(parseId(path),p.id)); return; }
     if ("ip-ranges".equals(path) && "GET".equals(m)) { respond(x,200,map("items",phaseTwo.ranges())); return; }
     if ("ip-ranges".equals(path) && "POST".equals(m)) { long id=phaseTwo.createRange(body(x),p.id); respond(x,201,map("id",id)); return; }
+    if (path.matches("ip-ranges/\\d+/gateway-options") && "GET".equals(m)) { respond(x,200,manualAssignment.gatewayOptions(parseId(path))); return; }
+    if (path.matches("ip-ranges/\\d+/gateway") && "POST".equals(m)) { respond(x,200,manualAssignment.adjustGateway(parseId(path),body(x),p.id)); return; }
     if (path.matches("ip-ranges/\\d+") && "PUT".equals(m)) { phaseTwo.updateRange(parseId(path),body(x),p.id); respond(x,204,null); return; }
     if ("ip-pool".equals(path) && "GET".equals(m)) { respond(x,200,phaseTwo.poolItems(optionalQueryId(query(x,"branchId"),"支行"),optionalQueryId(query(x,"outletId"),"网点"),query(x,"q"),parsePage(query(x,"page")))); return; }
     if ("ip-pool-v2".equals(path) && "GET".equals(m)) { respond(x,200,phaseFour.pool(optionalQueryId(query(x,"branchId"),"支行"),optionalQueryId(query(x,"outletId"),"网点"),query(x,"rangeType"),query(x,"state"),query(x,"q"),parsePage(query(x,"page")))); return; }
     if ("ip-pool".equals(path) && "POST".equals(m)) { throw new ApiError(409,"IP_POOL_AUTOMATIC","IP 资源池由网点绑定地址段后自动生成，请直接维护具体 IP 的可用状态。"); }
     if ("ip-pool/status".equals(path) && "PUT".equals(m)) { int count=phaseTwo.updatePoolBatch(body(x),p.id); respond(x,200,map("updated",count)); return; }
+    if (path.matches("ip-pool/\\d+/manual-assignment") && "GET".equals(m)) { respond(x,200,manualAssignment.options(parseId(path))); return; }
+    if (path.matches("ip-pool/\\d+/manual-assignment") && "POST".equals(m)) { respond(x,201,manualAssignment.register(parseId(path),body(x),p.id)); return; }
     if (path.matches("ip-pool/\\d+/switch-port") && "PUT".equals(m)) { JsonObject b=body(x); String versionKey=b.has("assignmentVersion")?"assignmentVersion":"version"; respond(x,200,phaseFour.updateSwitchPort(parseId(path),number(b,"assignmentId"),number(b,versionKey),optionalSwitchPort(b),p.id)); return; }
     if (path.matches("ip-pool/\\d+") && "PUT".equals(m)) { updatePool(x,p,requestId,parseId(path)); return; }
     if (path.matches("ip-pool/\\d+/reachability") && "POST".equals(m)) { respond(x,200,phaseFour.ping(parseId(path),p.id)); return; }
@@ -234,13 +239,28 @@ public final class IpamApplication {
     private boolean hasVersion(Connection c,String v)throws SQLException {try(PreparedStatement p=c.prepareStatement("SELECT 1 FROM schema_history WHERE version=?")){p.setString(1,v);return p.executeQuery().next();}}
     void apply(Connection c,String v,String d,String resource) throws Exception {
       String sql=readResource(resource), sum=hash(sql);
-      try(PreparedStatement p=c.prepareStatement("SELECT checksum FROM schema_history WHERE version=?")) { p.setString(1,v); ResultSet rs=p.executeQuery(); if(rs.next()){ if(!sum.equals(rs.getString(1))) throw new IllegalStateException("已发布迁移脚本校验和不匹配: V"+v); return; } }
+      try(PreparedStatement p=c.prepareStatement("SELECT checksum FROM schema_history WHERE version=?")) { p.setString(1,v); ResultSet rs=p.executeQuery(); if(rs.next()){ if(!sum.equals(rs.getString(1))) throw new IllegalStateException("已发布迁移脚本校验和不匹配: V"+v); if("019".equals(v)&&!hasVersion(c,"020"))applyManualAssignmentMigration(c,"020","manual assignment and gateway adjustment","/db/migration/V020__manual_assignment_and_gateway.sql"); return; } }
       c.setAutoCommit(false);
       try {
         try(Statement s=c.createStatement()){ for(String part:sql.split(";\\s*(?:\\r?\\n|$)")){ if(!part.trim().isEmpty())s.executeUpdate(part); } }
         try(PreparedStatement p=c.prepareStatement("INSERT INTO schema_history(version,description,checksum) VALUES(?,?,?)")){p.setString(1,v);p.setString(2,d);p.setString(3,sum);p.executeUpdate();}
         c.commit();
       } catch(Exception e) { c.rollback(); throw e; } finally { c.setAutoCommit(true); }
+      if("019".equals(v)&&!hasVersion(c,"020"))applyManualAssignmentMigration(c,"020","manual assignment and gateway adjustment","/db/migration/V020__manual_assignment_and_gateway.sql");
+    }
+    void applyManualAssignmentMigration(Connection c,String v,String d,String resource) throws Exception {
+      String sql=readResource(resource),sum=hash(sql);
+      try(PreparedStatement p=c.prepareStatement("SELECT checksum FROM schema_history WHERE version=?")){p.setString(1,v);try(ResultSet rs=p.executeQuery()){if(rs.next()){if(!sum.equals(rs.getString(1)))throw new IllegalStateException("已发布迁移脚本校验和不匹配: V"+v);return;}}}
+      if(!c.getAutoCommit())throw new IllegalStateException("V020 requires an idle migration connection.");
+      try(Statement s=c.createStatement()){s.execute("PRAGMA foreign_keys=OFF");}
+      boolean committed=false;
+      try{
+        c.setAutoCommit(false);
+        try(Statement s=c.createStatement()){for(String part:sql.split(";\\s*(?:\\r?\\n|$)")){if(!part.trim().isEmpty())s.executeUpdate(part);}}
+        try(PreparedStatement p=c.prepareStatement("INSERT INTO schema_history(version,description,checksum) VALUES(?,?,?)")){p.setString(1,v);p.setString(2,d);p.setString(3,sum);p.executeUpdate();}
+        c.commit();committed=true;
+      }catch(Exception e){c.rollback();throw e;}finally{if(!c.getAutoCommit())c.setAutoCommit(true);try(Statement s=c.createStatement()){s.execute("PRAGMA foreign_keys=ON");}}
+      if(committed)try(Statement s=c.createStatement();ResultSet rs=s.executeQuery("PRAGMA foreign_key_check")){if(rs.next())throw new IllegalStateException("V020 foreign-key validation failed: "+rs.getString(1)+" row "+rs.getLong(2));}
     }
     /* SQLite cannot drop and rebuild a parent table with foreign keys enabled.  V013
        is deliberately run as a single isolated migration: foreign keys are disabled
@@ -304,6 +324,10 @@ public final class IpamApplication {
           row.put("switchPortBefore",safeAuditPort(detail.get("before")));
           row.put("switchPortAfter",safeAuditPort(detail.get("after")));
         }
+        if("MANUAL_REGISTER_IP".equals(row.get("action"))||"ADJUST_GATEWAY".equals(row.get("action"))){
+          Map<String,Object> detail=safeAuditDetail(row.get("detailJson"));
+          for(String key:Arrays.asList("ipAddress","cidr","sourceState","beforeGateway","afterGateway","beforeState","afterState","assetType","assetName","responsibleTechUserId","note"))if(detail.containsKey(key))row.put(key,detail.get(key));
+        }
         row.remove("detailJson");
       }
       return out;
@@ -316,6 +340,7 @@ public final class IpamApplication {
           JsonObject obj=parsed.getAsJsonObject();
           if(obj.has("before")&&obj.get("before").isJsonPrimitive()&&obj.get("before").getAsJsonPrimitive().isString())result.put("before",obj.get("before").getAsString());
           if(obj.has("after")&&obj.get("after").isJsonPrimitive()&&obj.get("after").getAsJsonPrimitive().isString())result.put("after",obj.get("after").getAsString());
+          for(String key:Arrays.asList("ipAddress","cidr","sourceState","beforeGateway","afterGateway","beforeState","afterState","assetType","assetName","responsibleTechUserId","note"))if(obj.has(key)&&obj.get(key).isJsonPrimitive())result.put(key,obj.get(key).getAsJsonPrimitive().isString()?obj.get(key).getAsString():obj.get(key).getAsString());
         }
       }catch(Exception ignored){}
       return result;

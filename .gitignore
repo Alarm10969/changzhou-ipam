@@ -5,6 +5,7 @@ backend/integration-data-*/
 backend/*.db
 frontend/dist/
 release/
+!docs/release/
 deliverables/
 kylin-stage1-report-*.txt
 .idea/

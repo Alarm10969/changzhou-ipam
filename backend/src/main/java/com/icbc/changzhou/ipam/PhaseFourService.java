@@ -15,6 +15,8 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 /** Confirmed third-stage baseline: six-network planning, classifications and controlled diagnostics. */
 final class PhaseFourService {
   static final String GLOBAL_CIDR="108.56.0.0/13";
+  /** Relative offsets move the third octet, including for /27 outlet networks. */
+  static final long SEGMENT_OFFSET_ADDRESSES=256L;
   static final String[] TYPES={"PRODUCTION","NETWORK_MANAGEMENT","EXTENSION","MONITORING","TEST","OFFICE"};
   private static final Semaphore PING_SLOTS=new Semaphore(4,true);
   private static final Map<Long,Long> PING_LAST=new HashMap<Long,Long>();
@@ -37,16 +39,126 @@ final class PhaseFourService {
   Map<String,Object> createSubcategory(JsonObject b,long actor)throws Exception{long category=number(b,"categoryId");String name=required(b,"name",100);synchronized(PhaseTwoService.WRITE_LOCK){try(Connection c=open()){c.setAutoCommit(false);try{if(!exists(c,"SELECT 1 FROM asset_category WHERE id=?",category))throw problem("CATEGORY_NOT_FOUND","资产分类不存在。");if(exists(c,"SELECT 1 FROM asset_subcategory WHERE category_id=? AND name=?",category,name))throw problem("SUBCATEGORY_DUPLICATE","同一分类下小类名称已存在。");long id=insert(c,"INSERT INTO asset_subcategory(category_id,name) VALUES(?,?)",category,name);audit(c,actor,"CREATE_ASSET_SUBCATEGORY","ASSET_SUBCATEGORY",String.valueOf(id),"SUCCESS",null);c.commit();return map("id",id);}catch(Exception e){c.rollback();throw e;}}}}
   void updateSubcategory(long id,JsonObject b,long actor)throws Exception{String name=required(b,"name",100);int active=integer(b,"active",1);if(active!=0&&active!=1)throw problem("FIELD_INVALID","active 必须为 0 或 1。");synchronized(PhaseTwoService.WRITE_LOCK){try(Connection c=open()){c.setAutoCommit(false);try{Map<String,Object> old=one(c,"SELECT category_id AS categoryId FROM asset_subcategory WHERE id=?",id);if(old==null)throw problem("SUBCATEGORY_NOT_FOUND","资产小类不存在。");long category=b.has("categoryId")?number(b,"categoryId"):n(old.get("categoryId"));if(!exists(c,"SELECT 1 FROM asset_category WHERE id=?",category))throw problem("CATEGORY_NOT_FOUND","资产分类不存在。");if(exists(c,"SELECT 1 FROM asset_subcategory WHERE category_id=? AND name=? AND id<>?",category,name,id))throw problem("SUBCATEGORY_DUPLICATE","同一分类下小类名称已存在。");change(c,"UPDATE asset_subcategory SET category_id=?,name=?,is_active=?,retired_at=CASE WHEN ?=0 THEN COALESCE(retired_at,?) ELSE NULL END WHERE id=?",category,name,active,active,Instant.now().toString(),id);audit(c,actor,"UPDATE_ASSET_SUBCATEGORY","ASSET_SUBCATEGORY",String.valueOf(id),"SUCCESS",null);c.commit();}catch(Exception e){c.rollback();throw e;}}}}
   Map<String,Object> applicationOptions(long outletId)throws Exception{try(Connection c=open()){Map<String,Object> rule=one(c,"SELECT id,version_no AS versionNo FROM planning_rule_version WHERE is_active=1");List<Map<String,Object>> rows=list(c,"SELECT range_type AS rangeType FROM ip_range WHERE outlet_id=? AND deleted_at IS NULL AND is_active=1 AND range_type IS NOT NULL",outletId);Set<String> have=new HashSet<String>();for(Map<String,Object>x:rows)have.add(String.valueOf(x.get("rangeType")));List<String> missing=new ArrayList<String>();for(String type:TYPES)if(!have.contains(type))missing.add(type);return map("complete",missing.isEmpty(),"missingTypes",missing,"ruleVersionId",rule.get("id"),"ruleVersion",rule.get("versionNo"));}}
-  Map<String,Object> previewPlan(JsonObject b)throws Exception{try(Connection c=open()){Rule r=activeRule(c);long outlet=number(b,"outletId");ensureOutlet(c,number(b,"branchId"),outlet);return map("ruleVersion",r.id,"segments",derive(r,required(b,"productionCidr",18)));}}
-  Map<String,Object> createPlan(JsonObject b,long actor)throws Exception{synchronized(PhaseTwoService.WRITE_LOCK){try(Connection c=open()){c.setAutoCommit(false);try{Rule r=activeRule(c);long branch=number(b,"branchId"),outlet=number(b,"outletId");ensureOutlet(c,branch,outlet);String production=required(b,"productionCidr",18);List<Map<String,Object>> segments=derive(r,production);if(exists(c,"SELECT 1 FROM ip_range WHERE outlet_id=? AND deleted_at IS NULL",outlet))throw problem("OUTLET_NETWORK_EXISTS","该网点已有地址段。请先按影响提示处理旧地址段后再生成六类网段。");for(Map<String,Object>s:segments){String cidr=String.valueOf(s.get("cidr"));if(exists(c,"SELECT 1 FROM ip_range WHERE deleted_at IS NULL AND cidr=?",cidr))throw problem("CIDR_OVERLAP","地址段与已有地址段重叠："+cidr);long rangeId=insert(c,"INSERT INTO ip_range(branch_id,outlet_id,cidr,subnet_mask,gateway,dns_primary,dns_secondary,is_active,range_type,planning_group,rule_version_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",branch,outlet,cidr,mask(((Integer)s.get("prefix")).intValue()),s.get("gateway"),r.dnsPrimary,r.dnsSecondary,1,s.get("type"),s.get("group"),r.id);populate(c,rangeId,(Long)s.get("start"),(Long)s.get("end"),String.valueOf(s.get("gateway")));}audit(c,actor,"CREATE_OUTLET_SIX_NETWORKS","OUTLET",String.valueOf(outlet),"SUCCESS","{\"ruleVersion\":"+r.id+",\"productionCidr\":\""+production+"\"}");c.commit();return map("outletId",outlet,"ruleVersion",r.id,"segments",segments);}catch(Exception e){c.rollback();throw e;}}}}
+  Map<String,Object> previewPlan(JsonObject b)throws Exception{
+    try(Connection c=open()){
+      Rule rule=activeRule(c);
+      long outlet=number(b,"outletId");
+      ensureOutlet(c,number(b,"branchId"),outlet);
+      if(exists(c,"SELECT 1 FROM ip_range WHERE outlet_id=? AND deleted_at IS NULL",outlet))throw problem("OUTLET_NETWORK_EXISTS","该网点已有地址段，不能再次生成。请先核对现有网段。");
+      String production=required(b,"productionCidr",18);
+      List<Map<String,Object>> segments=derive(rule,production);
+      List<PlanClaim> occupied=existingClaims(c);
+      List<Map<String,Object>> conflicts=conflicts(segments,occupied,-1);
+      String suggestion=conflicts.isEmpty()?null:suggestProduction(rule,production,occupied,-1);
+      return map("ruleVersion",rule.id,"segments",segments,"conflicts",conflicts,"suggestedProductionCidr",suggestion);
+    }
+  }
+  Map<String,Object> createPlan(JsonObject b,long actor)throws Exception{
+    synchronized(PhaseTwoService.WRITE_LOCK){
+      try(Connection c=open()){
+        c.setAutoCommit(false);
+        try{
+          Rule rule=activeRule(c);
+          long branch=number(b,"branchId"),outlet=number(b,"outletId");
+          ensureOutlet(c,branch,outlet);
+          String production=required(b,"productionCidr",18);
+          List<Map<String,Object>> segments=derive(rule,production);
+          if(exists(c,"SELECT 1 FROM ip_range WHERE outlet_id=? AND deleted_at IS NULL",outlet))throw problem("OUTLET_NETWORK_EXISTS","该网点已有地址段。请先按影响提示处理旧地址段后再生成六类网段。");
+          List<PlanClaim> occupied=existingClaims(c);
+          List<Map<String,Object>> conflicts=conflicts(segments,occupied,-1);
+          if(!conflicts.isEmpty())throw problem("CIDR_OVERLAP",conflictMessage(conflicts,suggestProduction(rule,production,occupied,-1)));
+          insertPlan(c,rule,branch,outlet,production,segments,actor);
+          c.commit();
+          return map("outletId",outlet,"ruleVersion",rule.id,"segments",segments);
+        }catch(Exception e){c.rollback();throw e;}
+      }
+    }
+  }
   byte[] planTemplate(String format)throws Exception{String[] headers={"branch_code","outlet_code","production_cidr"};if("CSV".equals(format))return ("\uFEFFbranch_code,outlet_code,production_cidr\r\nCZ001,OUT001,108.56.0.0/24\r\n").getBytes(StandardCharsets.UTF_8);try(Workbook w=new XSSFWorkbook();ByteArrayOutputStream out=new ByteArrayOutputStream()){Sheet s=w.createSheet("网点六段规划");Row h=s.createRow(0);for(int i=0;i<headers.length;i++)h.createCell(i).setCellValue(headers[i]);Row r=s.createRow(1);r.createCell(0).setCellValue("CZ001");r.createCell(1).setCellValue("OUT001");r.createCell(2).setCellValue("108.56.0.0/24");w.write(out);return out.toByteArray();}}
-  Map<String,Object> previewPlanImport(String fileName,byte[] raw,long actor)throws Exception{if(raw.length==0||raw.length>PhaseTwoService.MAX_BYTES)throw problem("IMPORT_FILE_SIZE","文件必须大于 0 且不超过 5 MiB。");String fmt=fileName.toLowerCase(Locale.ROOT).endsWith(".xlsx")?"XLSX":fileName.toLowerCase(Locale.ROOT).endsWith(".csv")?"CSV":null;if(fmt==null)throw problem("IMPORT_FORMAT_INVALID","仅支持 CSV 或 XLSX 文件。");List<PlanRow> rows=parsePlanRows(fmt,raw);synchronized(PhaseTwoService.WRITE_LOCK){try(Connection c=open()){List<PlanError> errors=validatePlanRows(c,rows);c.setAutoCommit(false);long job=insert(c,"INSERT INTO outlet_plan_import_job(file_format,original_file_name,file_sha256,status,total_rows,valid_rows,error_rows,created_by) VALUES(?,?,?,?,?,?,?,?)",fmt,safeName(fileName),sha(raw),errors.isEmpty()?"PREVIEW_READY":"FAILED",rows.size(),rows.size()-badPlanRows(errors).size(),badPlanRows(errors).size(),actor);savePlanErrors(c,job,errors);audit(c,actor,"OUTLET_PLAN_IMPORT_PREVIEW","OUTLET_PLAN_IMPORT",String.valueOf(job),errors.isEmpty()?"SUCCESS":"FAILURE",null);c.commit();if(errors.isEmpty())Files.write(planUploadDir.resolve(job+".upload"),raw,StandardOpenOption.CREATE_NEW);List<Map<String,Object>> preview=new ArrayList<Map<String,Object>>();for(PlanRow row:rows){try{Rule rule=activeRule(c);preview.add(map("rowNumber",row.number,"branchCode",row.branchCode,"outletCode",row.outletCode,"productionCidr",row.production,"segments",derive(rule,row.production)));}catch(Exception ignored){}}return map("id",job,"status",errors.isEmpty()?"PREVIEW_READY":"FAILED","totalRows",rows.size(),"validRows",rows.size()-badPlanRows(errors).size(),"errorRows",badPlanRows(errors).size(),"previews",preview);}}}
+  Map<String,Object> previewPlanImport(String fileName,byte[] raw,long actor)throws Exception{
+    if(raw.length==0||raw.length>PhaseTwoService.MAX_BYTES)throw problem("IMPORT_FILE_SIZE","文件必须大于 0 且不超过 5 MiB。");
+    String fmt=fileName.toLowerCase(Locale.ROOT).endsWith(".xlsx")?"XLSX":fileName.toLowerCase(Locale.ROOT).endsWith(".csv")?"CSV":null;
+    if(fmt==null)throw problem("IMPORT_FORMAT_INVALID","仅支持 CSV 或 XLSX 文件。");
+    List<PlanRow> rows=parsePlanRows(fmt,raw);
+    synchronized(PhaseTwoService.WRITE_LOCK){
+      try(Connection c=open()){
+        List<PlanError> errors=validatePlanRows(c,rows);
+        c.setAutoCommit(false);
+        long job=insert(c,"INSERT INTO outlet_plan_import_job(file_format,original_file_name,file_sha256,status,total_rows,valid_rows,error_rows,created_by) VALUES(?,?,?,?,?,?,?,?)",fmt,safeName(fileName),sha(raw),errors.isEmpty()?"PREVIEW_READY":"FAILED",rows.size(),rows.size()-badPlanRows(errors).size(),badPlanRows(errors).size(),actor);
+        savePlanErrors(c,job,errors);
+        audit(c,actor,"OUTLET_PLAN_IMPORT_PREVIEW","OUTLET_PLAN_IMPORT",String.valueOf(job),errors.isEmpty()?"SUCCESS":"FAILURE",null);
+        c.commit();
+        if(errors.isEmpty())Files.write(planUploadDir.resolve(job+".upload"),raw,StandardOpenOption.CREATE_NEW);
+        Rule rule=activeRule(c);
+        List<Map<String,Object>> preview=new ArrayList<Map<String,Object>>();
+        for(PlanRow row:rows){try{preview.add(map("rowNumber",row.number,"branchCode",row.branchCode,"outletCode",row.outletCode,"productionCidr",row.production,"segments",derive(rule,row.production)));}catch(PhaseTwoService.Problem ignored){}}
+        List<Map<String,Object>> details=new ArrayList<Map<String,Object>>();
+        for(PlanError error:errors)details.add(map("rowNumber",error.row,"field",error.field,"code",error.code,"message",error.message));
+        return map("id",job,"status",errors.isEmpty()?"PREVIEW_READY":"FAILED","totalRows",rows.size(),"validRows",rows.size()-badPlanRows(errors).size(),"errorRows",badPlanRows(errors).size(),"previews",preview,"errors",details);
+      }
+    }
+  }
   Map<String,Object> confirmPlanImport(long job,long actor)throws Exception{synchronized(PhaseTwoService.WRITE_LOCK){try(Connection c=open()){c.setAutoCommit(false);try{Map<String,Object> j=one(c,"SELECT file_format AS format,file_sha256 AS sha,status,created_by AS actor FROM outlet_plan_import_job WHERE id=?",job);if(j==null||n(j.get("actor"))!=actor)throw problem("IMPORT_NOT_FOUND","导入任务不存在。");if(!"PREVIEW_READY".equals(value(j.get("status"))))throw problem("IMPORT_NOT_CONFIRMABLE","该导入任务不能确认。");Path f=planUploadDir.resolve(job+".upload");if(!Files.isRegularFile(f))throw problem("IMPORT_FILE_EXPIRED","预览文件已过期，请重新上传。");byte[] raw=Files.readAllBytes(f);if(!sha(raw).equals(value(j.get("sha"))))throw problem("IMPORT_FILE_CHANGED","预览文件摘要不一致，请重新上传。");List<PlanRow> rows=parsePlanRows(value(j.get("format")),raw);List<PlanError> errors=validatePlanRows(c,rows);if(!errors.isEmpty()){execute(c,"DELETE FROM outlet_plan_import_error WHERE job_id=?",job);savePlanErrors(c,job,errors);execute(c,"UPDATE outlet_plan_import_job SET status='FAILED',valid_rows=0,error_rows=? WHERE id=?",badPlanRows(errors).size(),job);c.commit();Files.deleteIfExists(f);throw problem("IMPORT_REVALIDATION_FAILED","确认时检测到数据变化，请修正后重新上传。");}Rule rule=activeRule(c);for(PlanRow row:rows){Map<String,Object> o=one(c,"SELECT o.id AS outletId,b.id AS branchId FROM outlet o JOIN branch b ON b.id=o.branch_id WHERE b.code=? AND o.code=? AND b.is_active=1 AND o.is_active=1 AND b.deleted_at IS NULL AND o.deleted_at IS NULL",row.branchCode,row.outletCode);createPlanInTransaction(c,rule,n(o.get("branchId")),n(o.get("outletId")),row.production,actor);}execute(c,"UPDATE outlet_plan_import_job SET status='COMPLETED',confirmed_at=?,completed_at=? WHERE id=?",Instant.now().toString(),Instant.now().toString(),job);audit(c,actor,"OUTLET_PLAN_IMPORT_CONFIRM","OUTLET_PLAN_IMPORT",String.valueOf(job),"SUCCESS",null);c.commit();Files.deleteIfExists(f);return map("id",job,"status","COMPLETED","insertedRows",rows.size());}catch(Exception e){c.rollback();throw e;}}}}
-  private void createPlanInTransaction(Connection c,Rule r,long branch,long outlet,String production,long actor)throws Exception{ensureOutlet(c,branch,outlet);List<Map<String,Object>> segments=derive(r,production);if(exists(c,"SELECT 1 FROM ip_range WHERE outlet_id=? AND deleted_at IS NULL",outlet))throw problem("OUTLET_NETWORK_EXISTS","网点已有地址段，不能重复生成六类网段。");for(Map<String,Object>s:segments){String cidr=value(s.get("cidr"));if(exists(c,"SELECT 1 FROM ip_range WHERE deleted_at IS NULL AND cidr=?",cidr))throw problem("CIDR_OVERLAP","地址段与已有地址段重叠："+cidr);long id=insert(c,"INSERT INTO ip_range(branch_id,outlet_id,cidr,subnet_mask,gateway,dns_primary,dns_secondary,is_active,range_type,planning_group,rule_version_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",branch,outlet,cidr,mask(((Integer)s.get("prefix")).intValue()),s.get("gateway"),r.dnsPrimary,r.dnsSecondary,1,s.get("type"),s.get("group"),r.id);populate(c,id,(Long)s.get("start"),(Long)s.get("end"),value(s.get("gateway")));}audit(c,actor,"CREATE_OUTLET_SIX_NETWORKS","OUTLET",String.valueOf(outlet),"SUCCESS","{\"ruleVersion\":"+r.id+",\"productionCidr\":\""+json(production)+"\"}");}
+  private void createPlanInTransaction(Connection c,Rule rule,long branch,long outlet,String production,long actor)throws Exception{
+    ensureOutlet(c,branch,outlet);
+    List<Map<String,Object>> segments=derive(rule,production);
+    if(exists(c,"SELECT 1 FROM ip_range WHERE outlet_id=? AND deleted_at IS NULL",outlet))throw problem("OUTLET_NETWORK_EXISTS","网点已有地址段，不能重复生成六类网段。");
+    List<PlanClaim> occupied=existingClaims(c);
+    List<Map<String,Object>> overlaps=conflicts(segments,occupied,-1);
+    if(!overlaps.isEmpty())throw problem("CIDR_OVERLAP",conflictMessage(overlaps,suggestProduction(rule,production,occupied,-1)));
+    insertPlan(c,rule,branch,outlet,production,segments,actor);
+  }
+  private void insertPlan(Connection c,Rule rule,long branch,long outlet,String production,List<Map<String,Object>> segments,long actor)throws Exception{
+    for(Map<String,Object> segment:segments){
+      long id=insert(c,"INSERT INTO ip_range(branch_id,outlet_id,cidr,subnet_mask,gateway,dns_primary,dns_secondary,is_active,range_type,planning_group,rule_version_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",branch,outlet,segment.get("cidr"),mask((Integer)segment.get("prefix")),segment.get("gateway"),rule.dnsPrimary,rule.dnsSecondary,1,segment.get("type"),segment.get("group"),rule.id);
+      populate(c,id,(Long)segment.get("start"),(Long)segment.get("end"),value(segment.get("gateway")));
+    }
+    audit(c,actor,"CREATE_OUTLET_SIX_NETWORKS","OUTLET",String.valueOf(outlet),"SUCCESS","{\"ruleVersion\":"+rule.id+",\"productionCidr\":\""+json(production)+"\"}");
+  }
   private List<PlanRow> parsePlanRows(String fmt,byte[] raw)throws Exception{List<PlanRow> out=new ArrayList<PlanRow>();if("CSV".equals(fmt)){String[] lines=new String(raw,StandardCharsets.UTF_8).replace("\uFEFF","").split("\\r?\\n");for(int i=1;i<lines.length;i++){if(lines[i].trim().isEmpty())continue;String[] a=lines[i].split(",",-1);out.add(new PlanRow(i+1,cell(a,0),cell(a,1),cell(a,2)));}}else{try(Workbook wb=WorkbookFactory.create(new ByteArrayInputStream(raw))){Sheet s=wb.getSheetAt(0);DataFormatter f=new DataFormatter();for(int i=1;i<=s.getLastRowNum();i++){Row r=s.getRow(i);if(r==null)continue;String a=cell(f,r,0),b=cell(f,r,1),d=cell(f,r,2);if(a.isEmpty()&&b.isEmpty()&&d.isEmpty())continue;out.add(new PlanRow(i+1,a,b,d));}}}if(out.isEmpty())throw problem("IMPORT_EMPTY","导入文件没有可处理的数据行。");if(out.size()>PhaseTwoService.MAX_ROWS)throw problem("IMPORT_TOO_LARGE","导入行数超过上限。");return out;}
-  private List<PlanError> validatePlanRows(Connection c,List<PlanRow> rows)throws Exception{List<PlanError> errors=new ArrayList<PlanError>();Set<String> outlets=new HashSet<String>(),cidrs=new HashSet<String>();Rule rule=activeRule(c);for(PlanRow row:rows){if(row.branchCode.isEmpty())errors.add(new PlanError(row.number,"branch_code","REQUIRED","支行编码不能为空。"));if(row.outletCode.isEmpty())errors.add(new PlanError(row.number,"outlet_code","REQUIRED","网点编码不能为空。"));if(row.production.isEmpty())errors.add(new PlanError(row.number,"production_cidr","REQUIRED","生产网段不能为空。"));Map<String,Object> o=null;if(!row.branchCode.isEmpty()&&!row.outletCode.isEmpty()){o=one(c,"SELECT o.id AS outletId FROM outlet o JOIN branch b ON b.id=o.branch_id WHERE b.code=? AND o.code=? AND b.is_active=1 AND o.is_active=1 AND b.deleted_at IS NULL AND o.deleted_at IS NULL",row.branchCode,row.outletCode);if(o==null)errors.add(new PlanError(row.number,"outlet_code","OUTLET_BRANCH_INVALID","支行、网点不匹配或未启用。"));else if(!outlets.add(row.branchCode+"/"+row.outletCode))errors.add(new PlanError(row.number,"outlet_code","DUPLICATE_OUTLET","同一网点只能出现一次。"));else if(exists(c,"SELECT 1 FROM ip_range WHERE outlet_id=? AND deleted_at IS NULL",n(o.get("outletId"))))errors.add(new PlanError(row.number,"outlet_code","OUTLET_NETWORK_EXISTS","该网点已有地址段。"));}if(!row.production.isEmpty()){try{List<Map<String,Object>> ss=derive(rule,row.production);for(Map<String,Object>s:ss){String cidr=value(s.get("cidr"));if(!cidrs.add(cidr)||exists(c,"SELECT 1 FROM ip_range WHERE cidr=? AND deleted_at IS NULL",cidr)){errors.add(new PlanError(row.number,"production_cidr","CIDR_OVERLAP","生产网段或其派生网段与已有/导入数据重叠。"));break;}}}catch(PhaseTwoService.Problem e){errors.add(new PlanError(row.number,"production_cidr",e.code,e.getMessage()));}}}return errors;}
+  private List<PlanError> validatePlanRows(Connection c,List<PlanRow> rows)throws Exception{
+    List<PlanError> errors=new ArrayList<PlanError>();
+    Set<String> outlets=new HashSet<String>();
+    Rule rule=activeRule(c);
+    List<PlanClaim> occupied=existingClaims(c);
+    Map<Integer,List<Map<String,Object>>> derived=new LinkedHashMap<Integer,List<Map<String,Object>>>();
+    for(PlanRow row:rows){
+      if(row.branchCode.isEmpty())errors.add(new PlanError(row.number,"branch_code","REQUIRED","支行编码不能为空。"));
+      if(row.outletCode.isEmpty())errors.add(new PlanError(row.number,"outlet_code","REQUIRED","网点编码不能为空。"));
+      if(row.production.isEmpty())errors.add(new PlanError(row.number,"production_cidr","REQUIRED","生产网段不能为空。"));
+      if(!row.branchCode.isEmpty()&&!row.outletCode.isEmpty()){
+        Map<String,Object> outlet=one(c,"SELECT o.id AS outletId FROM outlet o JOIN branch b ON b.id=o.branch_id WHERE b.code=? AND o.code=? AND b.is_active=1 AND o.is_active=1 AND b.deleted_at IS NULL AND o.deleted_at IS NULL",row.branchCode,row.outletCode);
+        if(outlet==null)errors.add(new PlanError(row.number,"outlet_code","OUTLET_BRANCH_INVALID","支行、网点不匹配或未启用。"));
+        else if(!outlets.add(row.branchCode+"/"+row.outletCode))errors.add(new PlanError(row.number,"outlet_code","DUPLICATE_OUTLET","同一网点只能出现一次。"));
+        else if(exists(c,"SELECT 1 FROM ip_range WHERE outlet_id=? AND deleted_at IS NULL",n(outlet.get("outletId"))))errors.add(new PlanError(row.number,"outlet_code","OUTLET_NETWORK_EXISTS","该网点已有地址段。"));
+      }
+      if(!row.production.isEmpty()){
+        try{
+          List<Map<String,Object>> segments=derive(rule,row.production);
+          derived.put(row.number,segments);
+          String owner="导入第 "+row.number+" 行（"+row.branchCode+" / "+row.outletCode+"）";
+          for(Map<String,Object> segment:segments)occupied.add(new PlanClaim((Long)segment.get("start"),(Long)segment.get("end"),value(segment.get("cidr")),value(segment.get("type")),owner,row.number));
+        }catch(PhaseTwoService.Problem e){errors.add(new PlanError(row.number,"production_cidr",e.code,e.getMessage()));}
+      }
+    }
+    List<PlanClaim> suggestionOccupied=new ArrayList<PlanClaim>(occupied);
+    for(PlanRow row:rows){
+      List<Map<String,Object>> segments=derived.get(row.number);
+      if(segments==null)continue;
+      List<Map<String,Object>> overlaps=conflicts(segments,occupied,row.number);
+      if(!overlaps.isEmpty()){
+        String suggestion=suggestProduction(rule,row.production,suggestionOccupied,row.number);
+        errors.add(new PlanError(row.number,"production_cidr","CIDR_OVERLAP",conflictMessage(overlaps,suggestion)));
+        if(suggestion!=null){
+          String owner="导入第 "+row.number+" 行的推荐网段（"+row.branchCode+" / "+row.outletCode+"）";
+          for(Map<String,Object> segment:derive(rule,suggestion))suggestionOccupied.add(new PlanClaim((Long)segment.get("start"),(Long)segment.get("end"),value(segment.get("cidr")),value(segment.get("type")),owner,row.number));
+        }
+      }
+    }
+    return errors;
+  }
   private static String cell(String[] a,int i){return i<a.length?a[i].trim():"";} private static String cell(DataFormatter f,Row r,int i){Cell c=r.getCell(i);return c==null?"":f.formatCellValue(c).trim();} private static Set<Integer> badPlanRows(List<PlanError> es){Set<Integer>s=new HashSet<Integer>();for(PlanError e:es)s.add(e.row);return s;} private static void savePlanErrors(Connection c,long id,List<PlanError> es)throws Exception{for(PlanError e:es)insert(c,"INSERT INTO outlet_plan_import_error(job_id,row_number,field_name,error_code,error_message) VALUES(?,?,?,?,?)",id,e.row,e.field,e.code,e.message);} private static String safeName(String x){return x==null?"outlet-plan-import":x.replaceAll("[\\\\/:*?\"<>|]","_");} private static String sha(byte[] b)throws Exception{byte[] h=MessageDigest.getInstance("SHA-256").digest(b);StringBuilder s=new StringBuilder();for(byte x:h)s.append(String.format("%02x",x));return s.toString();} static final class PlanRow{final int number;final String branchCode,outletCode,production;PlanRow(int n,String b,String o,String p){number=n;branchCode=b;outletCode=o;production=p;}} static final class PlanError{final int row;final String field,code,message;PlanError(int r,String f,String c,String m){row=r;field=f;code=c;message=m;}}
-  Map<String,Object> saveRule(JsonObject b,long actor)throws Exception{synchronized(PhaseTwoService.WRITE_LOCK){try(Connection c=open()){c.setAutoCommit(false);try{Rule old=activeRule(c);String global=optional(b,"globalCidr",18);if(global==null)global=GLOBAL_CIDR;if(!GLOBAL_CIDR.equals(global))throw problem("GLOBAL_CIDR_FIXED","全局可用地址范围固定为 "+GLOBAL_CIDR+"。");int segment=integer(b,"segmentPrefix",old.segmentPrefix),gateway=integer(b,"gatewayHostOffset",old.gatewayOffset);String reason=required(b,"changeReason",500),dns=required(b,"dnsPrimary",45),dns2=optional(b,"dnsSecondary",45);ip(dns);if(dns2!=null)ip(dns2);JsonArray supplied=b.has("segments")&&b.get("segments").isJsonArray()?b.getAsJsonArray("segments"):null;List<Segment> segments=parseSegments(supplied,old);int block=segment-slotBits(segments);if(segment>30||block<13)throw problem("RULE_PREFIX_INVALID","默认单类网段前缀不足以容纳当前六类网段偏移。");long version=n(one(c,"SELECT COALESCE(MAX(version_no),0)+1 AS id FROM planning_rule_version").get("id"));change(c,"UPDATE planning_rule_version SET is_active=0 WHERE is_active=1");long id=insert(c,"INSERT INTO planning_rule_version(version_no,global_cidr,outlet_block_prefix,segment_prefix,gateway_host_offset,dns_primary,dns_secondary,is_active,change_reason,activated_by) VALUES(?,?,?,?,?,?,?,?,?,?)",version,global,block,segment,gateway,dns,dns2,1,reason,actor);for(Segment s:segments)insert(c,"INSERT INTO network_segment_type(rule_version_id,code,name,relative_offset,is_enabled) VALUES(?,?,?,?,?)",id,s.code,s.name,s.offset,s.enabled?1:0);audit(c,actor,"ACTIVATE_PLANNING_RULE","PLANNING_RULE",String.valueOf(id),"SUCCESS","{\"reason\":\""+json(reason)+"\"}");c.commit();return map("id",id,"versionNo",version);}catch(Exception e){c.rollback();throw e;}}}}
+  Map<String,Object> saveRule(JsonObject b,long actor)throws Exception{synchronized(PhaseTwoService.WRITE_LOCK){try(Connection c=open()){c.setAutoCommit(false);try{Rule old=activeRule(c);String global=optional(b,"globalCidr",18);if(global==null)global=GLOBAL_CIDR;if(!GLOBAL_CIDR.equals(global))throw problem("GLOBAL_CIDR_FIXED","全局可用地址范围固定为 "+GLOBAL_CIDR+"。");int segment=integer(b,"segmentPrefix",old.segmentPrefix),gateway=integer(b,"gatewayHostOffset",1);if(gateway!=1)throw problem("GATEWAY_RULE_FIXED","网关固定使用网段内最后一个可用地址，不能再设置首地址偏移。");String reason=required(b,"changeReason",500),dns=required(b,"dnsPrimary",45),dns2=optional(b,"dnsSecondary",45);ip(dns);if(dns2!=null)ip(dns2);JsonArray supplied=b.has("segments")&&b.get("segments").isJsonArray()?b.getAsJsonArray("segments"):null;List<Segment> segments=parseSegments(supplied,old);int block=segment-slotBits(segments);if(segment<24||segment>30)throw problem("RULE_PREFIX_INVALID","按第三段偏移时，单类网段前缀须为 /24 至 /30。");long version=n(one(c,"SELECT COALESCE(MAX(version_no),0)+1 AS id FROM planning_rule_version").get("id"));change(c,"UPDATE planning_rule_version SET is_active=0 WHERE is_active=1");long id=insert(c,"INSERT INTO planning_rule_version(version_no,global_cidr,outlet_block_prefix,segment_prefix,gateway_host_offset,dns_primary,dns_secondary,is_active,change_reason,activated_by) VALUES(?,?,?,?,?,?,?,?,?,?)",version,global,block,segment,gateway,dns,dns2,1,reason,actor);for(Segment s:segments)insert(c,"INSERT INTO network_segment_type(rule_version_id,code,name,relative_offset,is_enabled) VALUES(?,?,?,?,?)",id,s.code,s.name,s.offset,s.enabled?1:0);audit(c,actor,"ACTIVATE_PLANNING_RULE","PLANNING_RULE",String.valueOf(id),"SUCCESS","{\"reason\":\""+json(reason)+"\"}");c.commit();return map("id",id,"versionNo",version);}catch(Exception e){c.rollback();throw e;}}}}
   void saveMapping(JsonObject b,long actor)throws Exception{synchronized(PhaseTwoService.WRITE_LOCK){try(Connection c=open()){c.setAutoCommit(false);try{Rule rule=activeRule(c);long sub=number(b,"subcategoryId");String type=required(b,"rangeType",32),reason=required(b,"changeReason",500);assertType(type);if(!exists(c,"SELECT 1 FROM asset_subcategory s JOIN asset_category c ON c.id=s.category_id WHERE s.id=? AND s.is_active=1 AND c.is_active=1",sub))throw problem("SUBCATEGORY_INVALID","设备小类不存在或已停用。");if(!exists(c,"SELECT 1 FROM network_segment_type WHERE rule_version_id=? AND code=? AND is_enabled=1",rule.id,type))throw problem("RANGE_TYPE_DISABLED","目标网段类型未启用。");execute(c,"UPDATE asset_network_mapping SET is_active=0,retired_at=? WHERE rule_version_id=? AND subcategory_id=? AND is_active=1",Instant.now().toString(),rule.id,sub);insert(c,"INSERT INTO asset_network_mapping(rule_version_id,subcategory_id,range_type,is_active,change_reason,changed_by) VALUES(?,?,?,?,?,?)",rule.id,sub,type,1,reason,actor);audit(c,actor,"SAVE_ASSET_NETWORK_MAPPING","ASSET_SUBCATEGORY",String.valueOf(sub),"SUCCESS","{\"rangeType\":\""+type+"\"}");c.commit();}catch(Exception e){c.rollback();throw e;}}}}
   long submitApplication(long actor,JsonObject b)throws Exception{synchronized(PhaseTwoService.WRITE_LOCK){try(Connection c=open()){c.setAutoCommit(false);try{long branch=number(b,"branchId"),outlet=number(b,"outletId"),assetId=number(b,"assetId");ensureOutlet(c,branch,outlet);ensureComplete(c,outlet);Map<String,Object> asset=one(c,"SELECT asset_type AS assetType,name,requires_user AS requiresUser,requires_resource_code AS requiresResourceCode,recommended_range_type AS recommendedRangeType FROM asset_definition WHERE id=? AND is_active=1 AND deleted_at IS NULL",assetId);if(asset==null)throw problem("ASSET_INVALID","请选择已启用的资产。");boolean needsUser=n(asset.get("requiresUser"))==1,needsCode=n(asset.get("requiresResourceCode"))==1;String userName=optional(b,"userName",100),userAuth=optional(b,"userUnifiedAuthId",64),code=optional(b,"assetCode",100);if(needsUser){if(userName==null||userAuth==null)throw problem("ASSET_USER_REQUIRED","该资产关联使用人，请填写使用人姓名和统一认证号。");}else if(userName!=null||userAuth!=null)throw problem("ASSET_USER_FORBIDDEN","该资产不关联使用人，请勿填写使用人信息。");if(needsCode){if(code==null)throw problem("ASSET_CODE_REQUIRED","该资产关联资源编码，请填写资源编码。");}else if(code!=null)throw problem("ASSET_CODE_FORBIDDEN","该资产不关联资源编码，请勿填写资源编码。");Map<String,Object> applicant=one(c,"SELECT username,real_name AS realName FROM sys_user WHERE id=? AND is_active=1 AND deleted_at IS NULL",actor);if(applicant==null)throw problem("APPLICANT_INVALID","申请人账号不存在或已停用。");long id=insert(c,"INSERT INTO ip_application(applicant_user_id,applicant_name,applicant_username,unified_auth_id,branch_id,outlet_id,asset_id,asset_type,asset_name,requires_user,requires_resource_code,asset_code,user_name,user_unified_auth_id,recommended_range_type,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'PENDING')",actor,applicant.get("realName"),applicant.get("username"),applicant.get("username"),branch,outlet,assetId,asset.get("assetType"),asset.get("name"),asset.get("requiresUser"),asset.get("requiresResourceCode"),code,userName,userAuth,asset.get("recommendedRangeType"));audit(c,actor,"CREATE_APPLICATION_V3","APPLICATION",String.valueOf(id),"SUCCESS","{\"recommendedRangeType\":\""+asset.get("recommendedRangeType")+"\"}");c.commit();return id;}catch(Exception e){c.rollback();throw e;}}}}
   List<Map<String,Object>> applications(String status,String term)throws Exception{return applicationsForApplicant(status,term,null);}
@@ -58,21 +170,109 @@ final class PhaseFourService {
   Map<String,Object> pool(Long branch,Long outlet,String type,String term,int page)throws Exception{return pool(branch,outlet,type,null,term,page);}
   Map<String,Object> pool(Long branch,Long outlet,String type,String state,String term,int page)throws Exception{
     if(page<1)page=1;
-    String from=" FROM ip_address_pool p JOIN ip_range r ON r.id=p.ip_range_id JOIN branch b ON b.id=r.branch_id LEFT JOIN outlet o ON o.id=r.outlet_id LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' LEFT JOIN ip_application a ON a.id=d.application_id LEFT JOIN sys_user reviewer ON reviewer.id=a.reviewed_by WHERE p.deleted_at IS NULL AND r.deleted_at IS NULL AND b.deleted_at IS NULL AND (o.deleted_at IS NULL OR o.id IS NULL)";
+    String from=" FROM ip_address_pool p JOIN ip_range r ON r.id=p.ip_range_id JOIN branch b ON b.id=r.branch_id LEFT JOIN outlet o ON o.id=r.outlet_id LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' LEFT JOIN ip_application a ON a.id=d.application_id LEFT JOIN sys_user reviewer ON reviewer.id=a.reviewed_by LEFT JOIN sys_user registrar ON registrar.id=d.manual_registered_by LEFT JOIN sys_user responsible ON responsible.id=d.responsible_tech_user_id WHERE p.deleted_at IS NULL AND r.deleted_at IS NULL AND b.deleted_at IS NULL AND (o.deleted_at IS NULL OR o.id IS NULL)";
     List<Object> args=new ArrayList<Object>();
     if(branch!=null){from+=" AND b.id=?";args.add(branch);} if(outlet!=null){from+=" AND o.id=?";args.add(outlet);} if(optionalValue(type)!=null){assertType(type);from+=" AND r.range_type=?";args.add(type);}
     if(optionalValue(state)!=null){if("ASSIGNED".equals(state))from+=" AND d.id IS NOT NULL";else if("SYSTEM_RESERVED".equals(state))from+=" AND d.id IS NULL AND p.ip_address=r.gateway";else if("MANUAL_RESERVED".equals(state))from+=" AND d.id IS NULL AND p.ip_address<>r.gateway AND p.is_reserved=1";else if("AVAILABLE".equals(state))from+=" AND d.id IS NULL AND p.ip_address<>r.gateway AND p.is_active=1 AND p.is_reserved=0";else if("DISABLED".equals(state))from+=" AND d.id IS NULL AND p.ip_address<>r.gateway AND p.is_active=0";else throw problem("IP_STATE_INVALID","IP 状态筛选不正确。");}
-    String raw=optionalValue(term);if(raw!=null){if(fullIp(raw)){from+=" AND p.ip_address=?";args.add(raw);}else{String like="%"+raw+"%";from+=" AND (a.asset_name LIKE ? OR a.asset_code LIKE ? OR a.user_name LIKE ? OR a.user_unified_auth_id LIKE ?)";for(int i=0;i<4;i++)args.add(like);}}
+    String raw=optionalValue(term);if(raw!=null){if(fullIp(raw)){from+=" AND p.ip_address=?";args.add(raw);}else{String like="%"+raw+"%";from+=" AND (a.asset_name LIKE ? OR a.asset_code LIKE ? OR a.user_name LIKE ? OR a.user_unified_auth_id LIKE ? OR d.manual_asset_name LIKE ? OR d.manual_asset_code LIKE ? OR d.manual_user_name LIKE ? OR d.manual_user_unified_auth_id LIKE ?)";for(int i=0;i<8;i++)args.add(like);}}
     List<Object> pageArgs=new ArrayList<Object>(args);pageArgs.add(Integer.valueOf((page-1)*50));
-    List<Map<String,Object>>items=list("SELECT p.id,p.ip_address AS ipAddress,p.is_active AS active,p.is_reserved AS reserved,p.reservation_reason AS reservationReason,b.name AS branchName,o.name AS outletName,r.cidr,r.range_type AS rangeType,r.gateway,r.dns_primary AS dnsPrimary,r.dns_secondary AS dnsSecondary,d.id AS assignmentId,d.version AS assignmentVersion,d.switch_port AS switchPort,a.applicant_name AS applicantName,a.applicant_username AS applicantUsername,a.created_at AS applicationCreatedAt,a.reviewed_at AS reviewedAt,a.asset_type AS assetType,a.asset_name AS assetName,a.requires_user AS requiresUser,a.requires_resource_code AS requiresResourceCode,a.asset_code AS assetCode,a.user_name AS userName,a.user_unified_auth_id AS userUnifiedAuthId,a.recommended_range_type AS recommendedRangeType,a.final_range_type AS finalRangeType,a.approval_opinion AS approvalOpinion,reviewer.username AS reviewer,CASE WHEN p.ip_address=r.gateway THEN 1 ELSE 0 END AS systemReserved"+from+" ORDER BY b.name,o.name,r.range_type,p.id LIMIT 50 OFFSET ?",pageArgs.toArray());
+    List<Map<String,Object>>items=list("SELECT p.id,p.ip_address AS ipAddress,p.is_active AS active,p.is_reserved AS reserved,p.reservation_reason AS reservationReason,b.name AS branchName,o.name AS outletName,r.id AS rangeId,r.cidr,r.range_type AS rangeType,r.gateway,r.dns_primary AS dnsPrimary,r.dns_secondary AS dnsSecondary,d.id AS assignmentId,d.version AS assignmentVersion,d.switch_port AS switchPort,d.assignment_source AS assignmentSource,d.manual_asset_id AS manualAssetId,d.manual_asset_type AS manualAssetType,d.manual_asset_name AS manualAssetName,d.manual_requires_user AS manualRequiresUser,d.manual_requires_resource_code AS manualRequiresResourceCode,d.manual_asset_code AS manualAssetCode,d.manual_user_name AS manualUserName,d.manual_user_unified_auth_id AS manualUserUnifiedAuthId,d.manual_registered_by AS manualRegisteredBy,d.manual_registered_at AS manualRegisteredAt,d.responsible_tech_user_id AS responsibleTechUserId,d.manual_note AS manualNote,d.source_pool_state AS sourcePoolState,a.applicant_name AS applicantName,a.applicant_username AS applicantUsername,a.created_at AS applicationCreatedAt,a.reviewed_at AS reviewedAt,a.asset_type AS assetType,a.asset_name AS assetName,a.requires_user AS requiresUser,a.requires_resource_code AS requiresResourceCode,a.asset_code AS assetCode,a.user_name AS userName,a.user_unified_auth_id AS userUnifiedAuthId,a.recommended_range_type AS recommendedRangeType,a.final_range_type AS finalRangeType,a.approval_opinion AS approvalOpinion,reviewer.username AS reviewer,registrar.username AS manualRegistrar,responsible.username AS responsibleTech,CASE WHEN p.ip_address=r.gateway THEN 1 ELSE 0 END AS systemReserved"+from+" ORDER BY b.name,o.name,r.range_type,p.id LIMIT 50 OFFSET ?",pageArgs.toArray());
     for(Map<String,Object>x:items){boolean assigned=x.get("assignmentId")!=null,system=n(x.get("systemReserved"))==1,reserved=n(x.get("reserved"))==1,active=n(x.get("active"))==1;x.put("state",assigned?"ASSIGNED":system?"SYSTEM_RESERVED":reserved?"MANUAL_RESERVED":active?"AVAILABLE":"DISABLED");x.put("editable",assigned||system?0:1);x.put("allocationSummary",summary(x));}
     long total=n(one("SELECT count(*) AS id"+from,args.toArray()).get("id"));return map("items",items,"total",total,"page",page,"pageSize",50);
   }
   Map<String,Object> ping(long poolId,long actor)throws Exception{Map<String,Object>item;try(Connection c=open()){item=one(c,"SELECT p.ip_address AS ipAddress FROM ip_address_pool p JOIN ip_range r ON r.id=p.ip_range_id WHERE p.id=? AND p.deleted_at IS NULL AND r.deleted_at IS NULL",poolId);}if(item==null)throw problem("PING_TARGET_INVALID","只能检测资源池中存在的 IP 地址。");long now=System.currentTimeMillis();synchronized(PING_LAST){Long last=PING_LAST.get(actor);if(last!=null&&now-last.longValue()<2000)throw problem("PING_RATE_LIMITED","请间隔两秒后再检测。");PING_LAST.put(actor,now);}if(!PING_SLOTS.tryAcquire())throw problem("PING_BUSY","当前检测任务较多，请稍后重试。");String ip=String.valueOf(item.get("ipAddress"));long start=System.currentTimeMillis();String status="CHECK_FAILED";Long elapsed=null;try{List<String>cmd=new ArrayList<String>();if(System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("win")){cmd.add("ping");cmd.add("-n");cmd.add("1");cmd.add("-w");cmd.add("1200");}else{cmd.add("ping");cmd.add("-c");cmd.add("1");cmd.add("-W");cmd.add("2");}cmd.add(ip);Process p=new ProcessBuilder(cmd).redirectErrorStream(true).start();String output=read(p.getInputStream());boolean done=p.waitFor(3,java.util.concurrent.TimeUnit.SECONDS);if(!done){p.destroyForcibly();status="TIMEOUT";}else if(p.exitValue()==0){status="REACHABLE";elapsed=parseElapsed(output);}else status="NO_REPLY";}catch(Exception e){status="CHECK_FAILED";}finally{PING_SLOTS.release();}long used=System.currentTimeMillis()-start;try(Connection c=open()){audit(c,actor,"PING_IP","IP_POOL",String.valueOf(poolId),"SUCCESS","{\"status\":\""+status+"\",\"elapsedMs\":"+used+"}");}return map("ipAddress",ip,"status",status,"elapsedMs",elapsed==null?used:elapsed,"checkedAt",Instant.now().toString());}
 
-  private static String summary(Map<String,Object>x){if(x.get("assignmentId")==null)return "—";List<String> parts=new ArrayList<String>();parts.add(value(x.get("assetName")));if(n(x.get("requiresUser"))==1)parts.add(value(x.get("userName"))+" · "+value(x.get("userUnifiedAuthId")));if(n(x.get("requiresResourceCode"))==1)parts.add(value(x.get("assetCode")));return String.join(" · ",parts);}
+  private static String summary(Map<String,Object>x){if(x.get("assignmentId")==null)return "—";boolean manual="MANUAL_REGISTRATION".equals(value(x.get("assignmentSource")));String asset=manual?value(x.get("manualAssetName")):value(x.get("assetName"));int needsUser=(int)n(manual?x.get("manualRequiresUser"):x.get("requiresUser"));int needsCode=(int)n(manual?x.get("manualRequiresResourceCode"):x.get("requiresResourceCode"));String user=manual?value(x.get("manualUserName")):value(x.get("userName"));String auth=manual?value(x.get("manualUserUnifiedAuthId")):value(x.get("userUnifiedAuthId"));String code=manual?value(x.get("manualAssetCode")):value(x.get("assetCode"));List<String> parts=new ArrayList<String>();parts.add(asset);if(needsUser==1)parts.add(user+" · "+auth);if(needsCode==1)parts.add(code);return String.join(" · ",parts);}
   private Rule activeRule(Connection c)throws Exception{Map<String,Object>m=one(c,"SELECT id,outlet_block_prefix AS blockPrefix,segment_prefix AS segmentPrefix,gateway_host_offset AS gatewayOffset,dns_primary AS dnsPrimary,dns_secondary AS dnsSecondary FROM planning_rule_version WHERE is_active=1");if(m==null)throw problem("RULE_NOT_FOUND","未找到当前生效的地址规划规则。");return new Rule(n(m.get("id")),(int)n(m.get("blockPrefix")),(int)n(m.get("segmentPrefix")),(int)n(m.get("gatewayOffset")),value(m.get("dnsPrimary")),blank(value(m.get("dnsSecondary"))));}
-  private List<Map<String,Object>> derive(Rule r,String production)throws Exception{Net p=Net.parse(production),global=Net.parse(GLOBAL_CIDR);List<Segment> configured=segments(r);int blockBits=slotBits(configured),blockPrefix=p.prefix-blockBits;if(blockPrefix<13)throw problem("RULE_PREFIX_INVALID","生产网段前缀过小，无法容纳当前六类网段偏移。");if(!global.contains(p.start)||!global.contains(p.end))throw problem("CIDR_OUT_OF_GLOBAL_RANGE","生产网段必须位于 "+GLOBAL_CIDR+" 内。");long blockSize=1L<<(32-blockPrefix),segmentSize=1L<<(32-p.prefix),blockStart=p.start&~(blockSize-1);if(p.start!=blockStart)throw problem("PRODUCTION_ALIGNMENT_INVALID","生产网段必须位于自动推导的网点 /"+blockPrefix+" 规划块起始位置。");List<Map<String,Object>>out=new ArrayList<Map<String,Object>>();for(Segment s:configured){if(!s.enabled)throw problem("SEGMENT_TYPE_INCOMPLETE","六类网段必须全部启用。");long start=p.start+s.offset*segmentSize,end=start+segmentSize-1;if(start<blockStart||end>blockStart+blockSize-1||!global.contains(start)||!global.contains(end))throw problem("SEGMENT_OFFSET_INVALID","网段偏移超出网点规划块或全局范围。");long gateway=start+r.gatewayOffset;if(gateway>=end)throw problem("GATEWAY_RULE_INVALID","网关规则不能落在广播地址。");out.add(map("type",s.code,"name",s.name,"cidr",Net.text(start)+"/"+p.prefix,"gateway",Net.text(gateway),"start",Long.valueOf(start),"end",Long.valueOf(end),"prefix",Integer.valueOf(p.prefix),"group",Net.text(blockStart)+"/"+blockPrefix));}return out;}
+  private List<Map<String,Object>> derive(Rule r,String production)throws Exception{
+    Net p=Net.parse(production),global=Net.parse(GLOBAL_CIDR);
+    if(p.prefix<24)throw problem("RULE_PREFIX_INVALID","按第三段偏移时，生产网段前缀须为 /24 至 /30。");
+    if(!global.contains(p.start)||!global.contains(p.end))throw problem("CIDR_OUT_OF_GLOBAL_RANGE","生产网段必须位于 "+GLOBAL_CIDR+" 内。");
+    long segmentSize=1L<<(32-p.prefix);
+    List<Map<String,Object>> out=new ArrayList<Map<String,Object>>();
+    for(Segment s:segments(r)){
+      if(!s.enabled)throw problem("SEGMENT_TYPE_INCOMPLETE","六类网段必须全部启用。");
+      long start=p.start+s.offset*SEGMENT_OFFSET_ADDRESSES,end=start+segmentSize-1;
+      if(!global.contains(start)||!global.contains(end))throw problem("SEGMENT_OFFSET_INVALID","派生网段超出全局地址范围。请调整生产网段。");
+      out.add(map("type",s.code,"name",s.name,"cidr",Net.text(start)+"/"+p.prefix,"gateway",Net.text(end-1),"start",Long.valueOf(start),"end",Long.valueOf(end),"prefix",Integer.valueOf(p.prefix),"group",p.canonical));
+    }
+    return out;
+  }
+  private static List<PlanClaim> existingClaims(Connection c)throws Exception{
+    List<PlanClaim> claims=new ArrayList<PlanClaim>();
+    List<Map<String,Object>> rows=list(c,"SELECT r.cidr,r.range_type AS rangeType,b.name AS branchName,o.name AS outletName,o.code AS outletCode FROM ip_range r JOIN branch b ON b.id=r.branch_id LEFT JOIN outlet o ON o.id=r.outlet_id WHERE r.deleted_at IS NULL");
+    for(Map<String,Object> row:rows){
+      Net net=Net.parse(value(row.get("cidr")));
+      String owner=value(row.get("branchName"));
+      if(row.get("outletName")!=null)owner+=" / "+value(row.get("outletName"))+"（"+value(row.get("outletCode"))+"）";
+      else owner+="（历史地址段）";
+      claims.add(new PlanClaim(net.start,net.end,net.canonical,value(row.get("rangeType")),owner,-1));
+    }
+    return claims;
+  }
+  private static List<Map<String,Object>> conflicts(List<Map<String,Object>> proposed,List<PlanClaim> occupied,int ownRow){
+    List<Map<String,Object>> found=new ArrayList<Map<String,Object>>();
+    for(Map<String,Object> segment:proposed){
+      long start=(Long)segment.get("start"),end=(Long)segment.get("end");
+      for(PlanClaim claim:occupied){
+        if(ownRow>0&&claim.row==ownRow)continue;
+        if(start<=claim.end&&claim.start<=end)found.add(map("candidateType",segment.get("type"),"candidateCidr",segment.get("cidr"),"occupiedType",claim.type,"occupiedCidr",claim.cidr,"occupiedBy",claim.owner,"occupiedRow",claim.row>0?claim.row:null));
+      }
+    }
+    return found;
+  }
+  private static String conflictMessage(List<Map<String,Object>> conflicts,String suggestion){
+    StringBuilder message=new StringBuilder();
+    int shown=Math.min(3,conflicts.size());
+    for(int i=0;i<shown;i++){
+      Map<String,Object> conflict=conflicts.get(i);
+      if(i>0)message.append("；");
+      message.append(value(conflict.get("candidateCidr"))).append("（").append(typeName(value(conflict.get("candidateType")))).append("）与 ").append(value(conflict.get("occupiedCidr"))).append("（").append(value(conflict.get("occupiedBy"))).append(" / ").append(typeName(value(conflict.get("occupiedType")))).append("）重叠");
+    }
+    if(conflicts.size()>shown)message.append("；另有 ").append(conflicts.size()-shown).append(" 处重叠");
+    if(suggestion!=null)message.append("。建议将生产网段改为 ").append(suggestion).append("（六类网段均无冲突）");
+    else message.append("。当前全局范围内未找到六类均无冲突的同前缀生产网段");
+    return message.append("。").toString();
+  }
+  private static String typeName(String code){
+    if("PRODUCTION".equals(code))return "生产";
+    if("NETWORK_MANAGEMENT".equals(code))return "网络管理";
+    if("EXTENSION".equals(code))return "扩展";
+    if("MONITORING".equals(code))return "监控";
+    if("TEST".equals(code))return "测试";
+    if("OFFICE".equals(code))return "办公";
+    return "旧地址段";
+  }
+  private String suggestProduction(Rule rule,String requested,List<PlanClaim> occupied,int ownRow)throws Exception{
+    Net original=Net.parse(requested),global=Net.parse(GLOBAL_CIDR);
+    long size=1L<<(32-original.prefix),maxOffset=0;
+    List<Segment> configured=segments(rule);
+    for(Segment segment:configured)if(segment.offset>maxOffset)maxOffset=segment.offset;
+    long latest=global.end-maxOffset*SEGMENT_OFFSET_ADDRESSES-size+1;
+    long upward=(latest-original.start)/size,downward=(original.start-global.start)/size;
+    long max=Math.max(upward,downward);
+    for(long distance=1;distance<=max;distance++){
+      long higher=original.start+distance*size;
+      if(higher<=latest&&candidateFree(higher,size,configured,occupied,ownRow))return Net.text(higher)+"/"+original.prefix;
+      long lower=original.start-distance*size;
+      if(lower>=global.start&&candidateFree(lower,size,configured,occupied,ownRow))return Net.text(lower)+"/"+original.prefix;
+    }
+    return null;
+  }
+  private static boolean candidateFree(long base,long size,List<Segment> configured,List<PlanClaim> occupied,int ownRow){
+    for(Segment segment:configured){
+      long start=base+segment.offset*SEGMENT_OFFSET_ADDRESSES,end=start+size-1;
+      for(PlanClaim claim:occupied){
+        if(ownRow>0&&claim.row==ownRow)continue;
+        if(start<=claim.end&&claim.start<=end)return false;
+      }
+    }
+    return true;
+  }
+  static final class PlanClaim{
+    final long start,end;final String cidr,type,owner;final int row;
+    PlanClaim(long start,long end,String cidr,String type,String owner,int row){this.start=start;this.end=end;this.cidr=cidr;this.type=type;this.owner=owner;this.row=row;}
+  }
   private List<Segment> segments(Rule r)throws Exception{try(Connection c=open()){return segments(c,r.id);}}
   private List<Segment> segments(Connection c,long id)throws Exception{List<Map<String,Object>>rows=list(c,"SELECT code,name,relative_offset AS offset,is_enabled AS enabled FROM network_segment_type WHERE rule_version_id=? ORDER BY relative_offset",id);List<Segment>out=new ArrayList<Segment>();for(Map<String,Object>x:rows)out.add(new Segment(value(x.get("code")),value(x.get("name")),(int)n(x.get("offset")),n(x.get("enabled"))==1));if(out.size()!=6)throw problem("SEGMENT_TYPE_INCOMPLETE","当前规则未完整配置六类网段。");return out;}
   private List<Segment> parseSegments(JsonArray supplied,Rule old)throws Exception{if(supplied==null)return segments(old);Map<String,Segment>by=new HashMap<String,Segment>();for(JsonElement e:supplied){if(!e.isJsonObject())throw problem("SEGMENT_INVALID","网段类型配置不正确。");JsonObject x=e.getAsJsonObject();String code=required(x,"code",32);assertType(code);by.put(code,new Segment(code,required(x,"name",32),integer(x,"relativeOffset",0),!x.has("enabled")||x.get("enabled").getAsBoolean()));}if(by.size()!=6)throw problem("SEGMENT_TYPE_INCOMPLETE","必须完整配置六类网段。");Set<Integer>offsets=new HashSet<Integer>();List<Segment>out=new ArrayList<Segment>();for(String code:TYPES){Segment s=by.get(code);if(s==null||!s.enabled||s.offset<0||s.offset>255||!offsets.add(s.offset))throw problem("SEGMENT_OFFSET_INVALID","网段类型偏移或启用状态不正确。");out.add(s);}return out;}

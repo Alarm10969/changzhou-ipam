@@ -18,9 +18,19 @@ $manifestBytes = [IO.File]::ReadAllBytes($manifest)
 if ($manifestBytes -contains 13) { throw 'Release checksum manifest must use Unix LF line endings.' }
 $delivery = Join-Path $projectRoot 'deliverables'
 New-Item -ItemType Directory -Force $delivery | Out-Null
-$stamp = Get-Date -Format 'yyyyMMdd-HHmm'
-$zip = Join-Path $delivery ("ipam-stage4-v020-password-switch-port-kylin-arm64-$stamp.zip")
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$zip = Join-Path $delivery ("ipam-stage4-v022-manual-assignment-gateway-kylin-arm64-$stamp.zip")
 if (Test-Path -LiteralPath $zip) { throw "Delivery already exists: $zip" }
-Compress-Archive -Path (Join-Path $projectRoot 'release\*') -DestinationPath $zip -Force
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zipArchive = [System.IO.Compression.ZipFile]::Open($zip, [System.IO.Compression.ZipArchiveMode]::Create)
+try {
+  Get-ChildItem (Join-Path $projectRoot 'release') -Recurse -File | Sort-Object FullName | ForEach-Object {
+    $relative = $_.FullName.Substring((Join-Path $projectRoot 'release').Length + 1).Replace('\','/')
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zipArchive, $_.FullName, $relative, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+  }
+} finally {
+  $zipArchive.Dispose()
+}
 Get-FileHash -LiteralPath $zip -Algorithm SHA256 | Format-List
-Write-Output "New Kylin stage-four V020 password-and-switch-port package: $zip"
+Write-Output "New Kylin stage-four V022 manual-assignment-gateway package: $zip"

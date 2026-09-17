@@ -9,6 +9,7 @@ chmod u+x "$BASE_DIR"/deploy/*.sh
 cd "$BASE_DIR"
 ./deploy/verify-package.sh
 [ -f "$BASE_DIR/ipam-stage3.jar" ] || { echo '缺少应用包。' >&2; exit 2; }
+grep -q '^3.7.0-v022-manual-assignment-gateway$' "$BASE_DIR/VERSION.txt" || { echo '版本文件校验失败。' >&2; exit 2; }
 if [ -r "$DATA_DIR/ipam-stage1.pid" ] && kill -0 "$(cat "$DATA_DIR/ipam-stage1.pid")" 2>/dev/null; then IPAM_DATA_DIR="$DATA_DIR" ./deploy/stop-stage1.sh; fi
 if [ -r "$DATA_DIR/ipam.db" ]; then
   BACKUP="$DATA_DIR/backups/ipam-before-stage3-$(date +%Y%m%d-%H%M%S).db"
@@ -23,5 +24,4 @@ elif command -v wget >/dev/null 2>&1; then HEALTH=$(wget -qO- "http://127.0.0.1:
 else echo '服务已启动，但缺少 curl/wget，无法执行健康接口检查；请安装前补齐其中之一。' >&2; exit 2
 fi
 printf '%s' "$HEALTH" | grep -q '"status":"UP"' || { echo "健康接口未返回 UP：$HEALTH" >&2; exit 2; }
-grep -q '^3.5.0-v020-password-switch-port$' "$BASE_DIR/VERSION.txt" || { echo '版本文件校验失败。' >&2; exit 2; }
 echo '第四阶段已启动，健康接口与版本号校验通过。'
