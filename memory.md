@@ -855,3 +855,10 @@
 - 原因：修改超长迁移调用链时手工复制路径，未立即与 `db/migration` 文件名核对。
 - 解决：恢复为仓库实际的 `V007__immediate_release_notification_statistics_export.sql`，并保留 V021 为独立连续迁移。
 - 防回归措施：发布编译后执行从空库和历史 V020 库的真实迁移测试，确保每个资源名都能加载。
+
+### Bug：MAC 地址首尾控制字符被 trim 静默吞掉
+
+- 现象：V023 独立验收从最终 JAR 反射调用 `normalizeMac` 时，前缀 NUL 和末尾 LF 被接受并返回合法的 `AA:BB:CC:DD:EE:FF`，预期应返回 `MAC_INVALID`。
+- 原因：MAC 归一化先调用 Java `String.trim()`，而 `trim()` 会删除部分首尾控制字符，导致后续格式校验看不到原始 NUL、LF、CR 或 Tab；问题与交换机端口控制字符校验的历史缺陷同型。
+- 解决：在任何 `trim()` 或格式归一化之前遍历原始输入，使用 `Character.isISOControl` 拒绝任意位置的 ISO 控制字符；保留普通首尾空格可清空或正常归一化的既有行为，并由审批、补录、编辑共用该服务端入口。
+- 防回归措施：Stage Thirteen 增加首尾 NUL/LF/CR/Tab 及内部 LF/CR/Tab 拒绝测试；发布后必须从最终 ZIP 内 JAR 直接复测这些输入，并同时执行阶段 1–13、浏览器、V020→V021 升级和发布包完整性校验。

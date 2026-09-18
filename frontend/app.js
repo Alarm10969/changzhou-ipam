@@ -280,7 +280,7 @@
       loginPage();
       return;
     }
-    app.innerHTML = '<header><div class="brand"><i>IP</i> IP 资源管理平台 <em>3.8.0 · V023</em></div><div>' + e(S.u.realName) + ' · ' + role(S.u.role) + ' <button id="out">退出</button></div></header><div class="shell"><nav id="nav">' + nav() + '</nav><main id="main"></main></div>';
+    app.innerHTML = '<header><div class="brand"><i>IP</i> IP 资源管理平台 <em>3.8.1 · V023</em></div><div>' + e(S.u.realName) + ' · ' + role(S.u.role) + ' <button id="out">退出</button></div></header><div class="shell"><nav id="nav">' + nav() + '</nav><main id="main"></main></div>';
     document.getElementById('out').onclick = function () {
       q('POST', 'auth/logout', {}, function () {
         S = { u: null, c: null, v: 'home', branches: [] };

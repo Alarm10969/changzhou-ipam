@@ -82,7 +82,7 @@ async function main() {
   await until(() => evaluate("!!document.querySelector('#go')"), 'login form missing');
   await evaluate("document.querySelector('#username').value='admin';document.querySelector('#password').value='test';document.querySelector('#go').click();true");
   await until(() => evaluate("!!document.querySelector('[data-v=applications]')"), 'admin navigation missing');
-  const displayedVersion = await evaluate("document.querySelector('.brand em').textContent"); if (displayedVersion !== '3.8.0 · V023') fail('page header version is not V023');
+  const displayedVersion = await evaluate("document.querySelector('.brand em').textContent"); if (displayedVersion !== '3.8.1 · V023') fail('page header version is not V023');
   await evaluate("document.querySelector('[data-v=applications]').click();true");
   await until(() => evaluate("!!document.querySelector('[data-approve]')"), 'pending application missing');
   await evaluate("document.querySelector('[data-approve]').click();true");
