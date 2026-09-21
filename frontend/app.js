@@ -280,7 +280,7 @@
       loginPage();
       return;
     }
-    app.innerHTML = '<header><div class="brand"><i>IP</i> IP 资源管理平台 <em>3.8.1 · V023</em></div><div>' + e(S.u.realName) + ' · ' + role(S.u.role) + ' <button id="out">退出</button></div></header><div class="shell"><nav id="nav">' + nav() + '</nav><main id="main"></main></div>';
+    app.innerHTML = '<header><div class="brand"><i>IP</i> IP 资源管理平台 <em>3.8.2 · V024</em></div><div>' + e(S.u.realName) + ' · ' + role(S.u.role) + ' <button id="out">退出</button></div></header><div class="shell"><nav id="nav">' + nav() + '</nav><main id="main"></main></div>';
     document.getElementById('out').onclick = function () {
       q('POST', 'auth/logout', {}, function () {
         S = { u: null, c: null, v: 'home', branches: [] };
@@ -421,7 +421,7 @@
           return;
         }
         id = this.getAttribute('data-delete');
-        if (id) (function (button, userId) { systemDialog('删除账号', '账号：' + button.getAttribute('data-username') + '（' + button.getAttribute('data-realname') + '）。删除采用软删除：立即停用并撤销会话，历史申请与审计记录保留，用户名不能复用。', '', '确认删除', null, function (root, data, confirm) { q('DELETE', 'admin/users/' + userId, null, function () { closeDialog(root); users(); }, null, confirm, '删除中…'); }); }(this, id));
+        if (id) (function (button, userId) { systemDialog('删除账号', '账号：' + button.getAttribute('data-username') + '（' + button.getAttribute('data-realname') + '）。删除后立即停用并撤销会话，历史申请和审计记录保留。若角色选错，可删除后用相同登录名按正确角色重新创建；旧账号历史不会被覆盖。', '', '确认删除', null, function (root, data, confirm) { q('DELETE', 'admin/users/' + userId, null, function () { closeDialog(root); users(); }, null, confirm, '删除中…'); }); }(this, id));
       };
     }
   }

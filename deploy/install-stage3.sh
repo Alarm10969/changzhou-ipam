@@ -9,7 +9,7 @@ chmod u+x "$BASE_DIR"/deploy/*.sh
 cd "$BASE_DIR"
 ./deploy/verify-package.sh
 [ -f "$BASE_DIR/ipam-stage3.jar" ] || { echo '缺少应用包。' >&2; exit 2; }
-grep -q '^3.8.1-v023-mac-address$' "$BASE_DIR/VERSION.txt" || { echo '版本文件校验失败。' >&2; exit 2; }
+grep -q '^3.8.2-v024-account-login$' "$BASE_DIR/VERSION.txt" || { echo '版本文件校验失败。' >&2; exit 2; }
 if [ -r "$DATA_DIR/ipam-stage1.pid" ] && kill -0 "$(cat "$DATA_DIR/ipam-stage1.pid")" 2>/dev/null; then IPAM_DATA_DIR="$DATA_DIR" ./deploy/stop-stage1.sh; fi
 if [ -r "$DATA_DIR/ipam.db" ]; then
   BACKUP="$DATA_DIR/backups/ipam-before-stage3-$(date +%Y%m%d-%H%M%S).db"

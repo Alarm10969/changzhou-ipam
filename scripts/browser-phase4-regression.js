@@ -20,6 +20,7 @@ function responseFor(url, method, body) {
     return input.username === 'tech' ? { id: 2, username: 'tech', realName: '科技管理员', role: 'TECH_ADMIN', mustChangePassword: false, csrfToken: 'tech-csrf' } : { id: 1, username: 'admin', realName: '管理员', role: 'ADMIN', mustChangePassword: false, csrfToken: 'admin-csrf' };
   }
   if (name === 'admin/dashboard') return { branchCount: 1, outletCount: 1, unboundOutletCount: 0, availableIpCount: 253, pendingCount: 1 };
+  if (name === 'admin/users') return { items: [{ id: 7, username: 'reuseuser', realName: '重建管理员', role: 'ADMIN', active: 1, initialAdmin: 0, deletedAt: null, mustChangePassword: 0, createdAt: '2026-09-20T00:00:00Z', creator: 'admin' }, { id: 6, username: 'reuseuser', realName: '原科技管理员', role: 'TECH_ADMIN', active: 0, initialAdmin: 0, deletedAt: '2026-09-19T00:00:00Z', mustChangePassword: 0, createdAt: '2026-09-19T00:00:00Z', creator: 'admin' }] };
   if (name === 'admin/audit') return { items: [{ id: 10, action: 'UPDATE_MAC', targetType: 'IP_ASSIGNMENT', targetId: '77', result: 'SUCCESS', createdAt: '2026-09-16T00:00:00Z', actor: 'admin', macAddressBefore: 'AA:BB:CC:DD:EE:00', macAddressAfter: '11:22:33:44:55:66' }, { id: 9, action: 'UPDATE_SWITCH_PORT', targetType: 'IP_ASSIGNMENT', targetId: '77', result: 'SUCCESS', createdAt: '2026-09-16T00:00:00Z', actor: 'admin', switchPortBefore: 'GE0/0/1', switchPortAfter: 'Eth-Trunk1', detailJson: '{"password":"SHOULD_NOT_RENDER"}' }] };
   if (name === 'admin/outlets' || name === 'outlets' || name === 'branches') return { items: [{ id: 1, branchId: 1, branchName: '回归支行', outletName: '回归网点', name: '回归网点', code: 'O4', active: 1, rangeId: 1 }] };
   if (name === 'admin/ip-ranges') return { items: [] };
@@ -82,7 +83,7 @@ async function main() {
   await until(() => evaluate("!!document.querySelector('#go')"), 'login form missing');
   await evaluate("document.querySelector('#username').value='admin';document.querySelector('#password').value='test';document.querySelector('#go').click();true");
   await until(() => evaluate("!!document.querySelector('[data-v=applications]')"), 'admin navigation missing');
-  const displayedVersion = await evaluate("document.querySelector('.brand em').textContent"); if (displayedVersion !== '3.8.1 · V023') fail('page header version is not V023');
+  const displayedVersion = await evaluate("document.querySelector('.brand em').textContent"); if (displayedVersion !== '3.8.2 · V024') fail('page header version is not V024');
   await evaluate("document.querySelector('[data-v=applications]').click();true");
   await until(() => evaluate("!!document.querySelector('[data-approve]')"), 'pending application missing');
   await evaluate("document.querySelector('[data-approve]').click();true");
@@ -142,6 +143,12 @@ async function main() {
   await evaluate("var dt=new DataTransfer();dt.items.add(new File(['branch_code,outlet_code,production_cidr'], 'test.csv', {type:'text/csv'}));document.querySelector('#planImportFile').files=dt.files;document.querySelector('#planImportPreview').click();true");
   await until(() => evaluate("document.querySelector('#planImportResult').textContent.indexOf('导入第 3 行')>=0"), 'batch overlap detail not visible');
   const batchGuard = await evaluate("!document.querySelector('#planImportConfirm') && document.querySelector('#batchNotice').textContent.indexOf('整批不会写入')>=0"); if (!batchGuard) fail('batch overlap did not block confirmation');
+  await evaluate("document.querySelector('[data-v=users]').click();true");
+  await until(() => evaluate("document.querySelector('#table') && document.querySelectorAll('#table [data-delete]').length===1"), 'account list did not distinguish current and deleted same-name accounts');
+  await evaluate("document.querySelector('#table [data-delete=\\\"7\\\"]').click();true");
+  await until(() => evaluate("!!document.querySelector('#systemModal')"), 'account deletion confirmation missing');
+  const reuseCopy = await evaluate("document.querySelector('#systemModal').textContent"); if (reuseCopy.indexOf('用相同登录名按正确角色重新创建')<0 || reuseCopy.indexOf('历史申请和审计记录保留')<0) fail('account deletion confirmation does not explain safe same-name recreation');
+  await evaluate("document.querySelector('#cancelSystem').click();true");
   await evaluate("document.querySelector('#out').click();true");
   await until(() => evaluate("!!document.querySelector('#username')"), 'logout did not return to login');
   await evaluate("document.querySelector('#username').value='tech';document.querySelector('#password').value='test';document.querySelector('#go').click();true");
@@ -153,7 +160,7 @@ async function main() {
   await evaluate("document.querySelector('[data-v=notifications]').click();true"); await until(() => evaluate("document.querySelector('#table') && document.querySelector('#table').textContent.indexOf('管理员已处理')>=0"), 'tech notification page missing');
   if (await evaluate("document.body.textContent.indexOf('交换机端口')<0") === false) fail('tech notification page leaked switch port');
   const leakedRequest = await evaluate("window.__phase4Requests.some(function(x){return JSON.stringify(x.body||{}).indexOf('switchPort')>=0 && x.path.indexOf('admin/')<0;})"); if (leakedRequest) fail('tech request carried switchPort field');
-  console.log('PASS|BROWSER_PHASE4|v023-header|password-hints|approval-port-mac|pool-port-mac-feedback|manual-assignment-mac|gateway-adjustment|gateway-stale-refresh|audit-summary|range-conflict-suggestion|narrow-screen|tech-port-mac-isolation');
+  console.log('PASS|BROWSER_PHASE4|v024-header|password-hints|approval-port-mac|pool-port-mac-feedback|manual-assignment-mac|gateway-adjustment|gateway-stale-refresh|audit-summary|range-conflict-suggestion|account-reuse-confirmation|narrow-screen|tech-port-mac-isolation');
   ws.close();
 }
 main().catch(error => { console.error(error.stack || error); process.exitCode = 1; }).finally(() => { if (browser) browser.kill(); if (server) server.close(); });
