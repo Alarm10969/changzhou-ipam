@@ -10,3 +10,12 @@ deliverables/
 kylin-stage1-report-*.txt
 .idea/
 *.log
+
+# Local test databases and generated verification/release workspaces
+*.db
+.local-*/
+.manual-*/
+.package-verify-*/
+.probe-*/
+.release-*-preserved-*/
+outputs/

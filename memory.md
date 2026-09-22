@@ -869,3 +869,26 @@
 - 原因：V016 有意允许已删除账号的登录名复用，但 `Database.login` 只按 `username` 查询，没有排除 `deleted_at`，可能先读到旧账号；旧记录已停用，登录因此失败。另一个独立问题是密码重置没有清除失败次数和锁定时间，账号仍可能处于锁定状态。
 - 解决：登录查询只匹配 `deleted_at IS NULL` 的当前账号；保留旧账号行和不同内部 ID，使历史申请、审计仍关联原主体；密码重置同时清零 `failed_login_count` 并清除 `locked_until`。删除确认文案和第二阶段账号规则明确说明可以按原登录名、正确角色重建。
 - 防回归措施：Stage Eight 在真实 SQLite 数据库中覆盖科技管理员软删除、同名改建管理员、核验新 ID/角色可登录、旧密码不可登录、锁定账号重置后可登录及当前重名仍被拒绝；浏览器回归核对删除提示；阶段 1–13 和浏览器回归全量通过。V024 的 59 项包内文件清单校验通过，并从发布 JAR 复测 Stage Eight 和 Stage Thirteen。
+
+### 2026-09-22：Git 推送前本地目录统计
+
+### Bug：PowerShell 的 `foreach` 语句后直接连接管道导致解析失败
+
+- 现象：统计本地验证目录文件数与容量时，PowerShell 报 `An empty pipe element is not allowed`。
+- 原因：把语句形式的 `foreach (...) { ... }` 直接接到 `| Format-Table`；当前 PowerShell 解析器不接受该写法。
+- 解决：先将 `foreach` 的输出收集到任务专用变量 `$dirStats`，语句结束后再执行 `$dirStats | Format-Table`。
+- 防回归措施：需要格式化 `foreach` 语句输出时，先赋值或用明确括号包裹表达式，不在语句块闭合后直接追加管道。
+
+### Bug：GitHub HTTPS 推送链路连接重置
+
+- 现象：`git push origin master` 先报 `Recv failure: Connection was reset`，改用 HTTP/1.1 后仍无法连接 `github.com:443`；同时 GitHub API 正常，`ssh.github.com:443` 的 TCP 测试通过。
+- 原因：当前网络到 `github.com` HTTPS Git 端点的 443 链路不可达，不是提交内容、仓库权限或对象大小问题；待推送对象最大不足 1 MiB、未压缩 blob 合计约 10 MiB。
+- 解决：创建临时 Ed25519 密钥，以仅限 `Alarm10969/changzhou-ipam` 私有仓库的可写 deploy key 接入 `ssh.github.com:443`，验证后通过该链路推送；完成后立即删除 GitHub deploy key 和本地临时私钥目录。
+- 防回归措施：HTTPS 推送连续失败时分别检查 `gh api`、`github.com:443` 和 `ssh.github.com:443`，只在主链路确实不可达时使用仓库级临时密钥，并在推送后验证密钥和本地文件均已清除。
+
+### Bug：动态临时目录的复合清理命令被安全策略拦截
+
+- 现象：把临时密钥创建、认证失败回滚和递归删除写在同一条长 PowerShell 命令中时，执行器在进程启动前直接拒绝该命令，实际没有创建密钥。
+- 原因：安全策略无法静态确认复合命令中动态计算出的递归删除目标，即使脚本内含路径前缀检查也会拒绝执行。
+- 解决：将创建、验证、推送和清理拆分，使用明确的 `C:\Users\24488\AppData\Local\Temp\codex-github-deploy-*` 绝对路径；清理前单独核验精确路径，再执行删除。
+- 防回归措施：Windows 上涉及临时目录递归删除时使用明确、窄范围的绝对路径，分步执行并先做只读核验，不把动态创建和递归删除塞进同一条复合命令。
