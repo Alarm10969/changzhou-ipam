@@ -15,7 +15,7 @@ final class ManualAssignmentService {
 
   Map<String,Object> options(long poolId)throws Exception{
     try(Connection c=open()){
-      Map<String,Object> pool=one(c,"SELECT p.id,p.ip_address AS ipAddress,p.is_active AS active,p.is_reserved AS reserved,p.reservation_reason AS reservationReason,r.id AS rangeId,r.cidr,r.gateway,r.range_type AS rangeType,b.id AS branchId,b.name AS branchName,o.id AS outletId,o.name AS outletName,d.id AS assignmentId FROM ip_address_pool p JOIN ip_range r ON r.id=p.ip_range_id JOIN branch b ON b.id=r.branch_id LEFT JOIN outlet o ON o.id=r.outlet_id LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' WHERE p.id=? AND p.deleted_at IS NULL AND r.deleted_at IS NULL AND b.deleted_at IS NULL AND (o.id IS NULL OR o.deleted_at IS NULL)",poolId);
+      Map<String,Object> pool=one(c,"SELECT p.id,p.ip_address AS ipAddress,p.is_active AS active,p.is_reserved AS reserved,p.is_occupied AS occupied,p.reservation_reason AS reservationReason,r.id AS rangeId,r.cidr,r.gateway,r.range_type AS rangeType,b.id AS branchId,b.name AS branchName,o.id AS outletId,o.name AS outletName,d.id AS assignmentId FROM ip_address_pool p JOIN ip_range r ON r.id=p.ip_range_id JOIN branch b ON b.id=r.branch_id LEFT JOIN outlet o ON o.id=r.outlet_id LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' WHERE p.id=? AND p.deleted_at IS NULL AND r.deleted_at IS NULL AND b.deleted_at IS NULL AND (o.id IS NULL OR o.deleted_at IS NULL)",poolId);
       if(pool==null)throw problem(404,"IP_NOT_FOUND","IP 不存在或已删除。");
       pool.put("state",state(pool));
       pool.put("sourceState",sourceState(pool));
@@ -32,11 +32,11 @@ final class ManualAssignmentService {
       try(Connection c=open()){
         c.setAutoCommit(false);
         try{
-          Map<String,Object> pool=one(c,"SELECT p.id,p.ip_address AS ipAddress,p.is_active AS active,p.is_reserved AS reserved,p.reservation_reason AS reservationReason,r.id AS rangeId,r.cidr,r.gateway,r.range_type AS rangeType,b.id AS branchId,b.name AS branchName,o.id AS outletId,o.name AS outletName,d.id AS assignmentId FROM ip_address_pool p JOIN ip_range r ON r.id=p.ip_range_id JOIN branch b ON b.id=r.branch_id LEFT JOIN outlet o ON o.id=r.outlet_id LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' WHERE p.id=? AND p.deleted_at IS NULL AND r.deleted_at IS NULL AND b.deleted_at IS NULL AND (o.id IS NULL OR o.deleted_at IS NULL)",poolId);
+          Map<String,Object> pool=one(c,"SELECT p.id,p.ip_address AS ipAddress,p.is_active AS active,p.is_reserved AS reserved,p.is_occupied AS occupied,p.reservation_reason AS reservationReason,r.id AS rangeId,r.cidr,r.gateway,r.range_type AS rangeType,b.id AS branchId,b.name AS branchName,o.id AS outletId,o.name AS outletName,d.id AS assignmentId FROM ip_address_pool p JOIN ip_range r ON r.id=p.ip_range_id JOIN branch b ON b.id=r.branch_id LEFT JOIN outlet o ON o.id=r.outlet_id LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' WHERE p.id=? AND p.deleted_at IS NULL AND r.deleted_at IS NULL AND b.deleted_at IS NULL AND (o.id IS NULL OR o.deleted_at IS NULL)",poolId);
           if(pool==null)throw problem(404,"IP_NOT_FOUND","IP 不存在或已删除。");
           if(pool.get("assignmentId")!=null)throw problem(409,"IP_ALREADY_ASSIGNED","该 IP 已分配，不能重复补录。");
           if(value(pool.get("ipAddress")).equals(value(pool.get("gateway"))))throw problem(400,"SYSTEM_RESERVED_PROTECTED","当前网关是系统保留地址，请先通过调整网关移走后再补录。");
-          String source=sourceState(pool);
+          String originalSource=sourceState(pool),source="OCCUPIED".equals(originalSource)?"AVAILABLE":originalSource;
           if(source==null)throw problem(409,"IP_NOT_AVAILABLE","该 IP 当前状态不能补录。");
           Map<String,Object> asset=one(c,"SELECT id,asset_type AS assetType,name,requires_user AS requiresUser,requires_resource_code AS requiresResourceCode,recommended_range_type AS recommendedRangeType FROM asset_definition WHERE id=? AND is_active=1 AND deleted_at IS NULL",assetId);
           if(asset==null)throw problem(400,"ASSET_INVALID","请选择已启用的资产小类。");
@@ -48,12 +48,13 @@ final class ManualAssignmentService {
           if(code!=null&&exists(c,"SELECT 1 FROM ip_assignment WHERE status='ASSIGNED' AND resource_code=?",code))throw problem(409,"RESOURCE_CODE_DUPLICATE","该资源编码已有有效分配记录。");
           Long responsible=optionalLong(b,"responsibleTechUserId");
           if(responsible!=null&&!exists(c,"SELECT 1 FROM sys_user WHERE id=? AND role='TECH_ADMIN' AND is_active=1 AND deleted_at IS NULL AND (branch_id IS NULL OR branch_id=?) AND (outlet_id IS NULL OR outlet_id=?)",responsible,n(pool.get("branchId")),n(pool.get("outletId"))))throw problem(400,"RESPONSIBLE_TECH_INVALID","负责科技管理员不存在、已停用或无该网点权限。");
-          String port=b.has("switchPort")?PhaseFourService.normalizeSwitchPort(b.get("switchPort").isJsonNull()?null:b.get("switchPort").getAsString()):null,mac=PhaseFourService.normalizeMac(b.has("macAddress")&&!b.get("macAddress").isJsonNull()?b.get("macAddress").getAsString():null);
+          String[] switches=PhaseFourService.normalizeSwitchFields(raw(b,"switchIp"),raw(b,"switchPort"));String port=switches[1],mac=PhaseFourService.normalizeMac(raw(b,"macAddress")),serial=PhaseFourService.normalizeSerialNumber(raw(b,"serialNumber"));
           String note=optional(b,"note",500),now=Instant.now().toString();
-          long id=insert(c,"INSERT INTO ip_assignment(application_id,ip_pool_id,resource_code,assigned_by,assigned_at,status,version,switch_port,mac_address,assignment_source,manual_asset_id,manual_asset_type,manual_asset_name,manual_requires_user,manual_requires_resource_code,manual_asset_code,manual_user_name,manual_user_unified_auth_id,manual_registered_by,manual_registered_at,responsible_tech_user_id,manual_note,source_pool_state,source_is_active,source_is_reserved,source_reservation_reason) VALUES(NULL,?,?,?,?, 'ASSIGNED',0,?,?, 'MANUAL_REGISTRATION',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",poolId,code,actor,now,port,mac,asset.get("id"),asset.get("assetType"),asset.get("name"),asset.get("requiresUser"),asset.get("requiresResourceCode"),code,userName,userAuth,actor,now,responsible,note,source,pool.get("active"),pool.get("reserved"),pool.get("reservationReason"));
-          audit(c,actor,"MANUAL_REGISTER_IP","IP_ASSIGNMENT",String.valueOf(id),"SUCCESS",json.toJson(map("ipAddress",pool.get("ipAddress"),"cidr",pool.get("cidr"),"sourceState",source,"assetType",asset.get("assetType"),"assetName",asset.get("name"),"responsibleTechUserId",responsible,"note",note)));
+          long id=insert(c,"INSERT INTO ip_assignment(application_id,ip_pool_id,resource_code,assigned_by,assigned_at,status,version,switch_port,mac_address,switch_ip,serial_number,assignment_source,manual_asset_id,manual_asset_type,manual_asset_name,manual_requires_user,manual_requires_resource_code,manual_asset_code,manual_user_name,manual_user_unified_auth_id,manual_registered_by,manual_registered_at,responsible_tech_user_id,manual_note,source_pool_state,source_is_active,source_is_reserved,source_reservation_reason) VALUES(NULL,?,?,?,?, 'ASSIGNED',0,?,?,?,?, 'MANUAL_REGISTRATION',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",poolId,code,actor,now,port,mac,switches[0],serial,asset.get("id"),asset.get("assetType"),asset.get("name"),asset.get("requiresUser"),asset.get("requiresResourceCode"),code,userName,userAuth,actor,now,responsible,note,source,"OCCUPIED".equals(originalSource)?1:pool.get("active"),"OCCUPIED".equals(originalSource)?0:pool.get("reserved"),"OCCUPIED".equals(originalSource)?null:pool.get("reservationReason"));
+          if("OCCUPIED".equals(originalSource))change(c,"UPDATE ip_address_pool SET is_occupied=0,is_active=1,is_reserved=0,reservation_reason=NULL,updated_at=? WHERE id=? AND is_occupied=1 AND deleted_at IS NULL",now,poolId);
+          audit(c,actor,"MANUAL_REGISTER_IP","IP_ASSIGNMENT",String.valueOf(id),"SUCCESS",json.toJson(map("ipAddress",pool.get("ipAddress"),"cidr",pool.get("cidr"),"sourceState",originalSource,"assetType",asset.get("assetType"),"assetName",asset.get("name"),"responsibleTechUserId",responsible,"note",note)));
           c.commit();
-          return map("id",id,"ipAddress",pool.get("ipAddress"),"assignmentSource","MANUAL_REGISTRATION","registeredAt",now,"sourceState",source);
+          return map("id",id,"ipAddress",pool.get("ipAddress"),"assignmentSource","MANUAL_REGISTRATION","registeredAt",now,"sourceState",originalSource);
         }catch(Exception e){c.rollback();throw e;}
       }
     }
@@ -63,8 +64,8 @@ final class ManualAssignmentService {
     try(Connection c=open()){
       Map<String,Object> range=one(c,"SELECT r.id,r.cidr,r.gateway,r.range_type AS rangeType,b.name AS branchName,o.name AS outletName FROM ip_range r JOIN branch b ON b.id=r.branch_id LEFT JOIN outlet o ON o.id=r.outlet_id WHERE r.id=? AND r.deleted_at IS NULL AND b.deleted_at IS NULL AND (o.id IS NULL OR o.deleted_at IS NULL)",rangeId);
       if(range==null)throw problem(404,"IP_RANGE_NOT_FOUND","地址段不存在或已删除。");
-      List<Map<String,Object>> items=list(c,"SELECT p.id,p.ip_address AS ipAddress,p.is_active AS active,p.is_reserved AS reserved,p.reservation_reason AS reservationReason,d.id AS assignmentId FROM ip_address_pool p JOIN ip_range r ON r.id=p.ip_range_id LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' WHERE p.ip_range_id=? AND p.deleted_at IS NULL ORDER BY p.id",rangeId);
-      for(Map<String,Object> item:items){item.put("state",state(item,range.get("gateway")));item.put("eligible",item.get("assignmentId")==null&&!value(item.get("ipAddress")).equals(value(range.get("gateway"))));}
+      List<Map<String,Object>> items=list(c,"SELECT p.id,p.ip_address AS ipAddress,p.is_active AS active,p.is_reserved AS reserved,p.is_occupied AS occupied,p.reservation_reason AS reservationReason,d.id AS assignmentId FROM ip_address_pool p JOIN ip_range r ON r.id=p.ip_range_id LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' WHERE p.ip_range_id=? AND p.deleted_at IS NULL ORDER BY p.id",rangeId);
+      for(Map<String,Object> item:items){item.put("state",state(item,range.get("gateway")));item.put("eligible",item.get("assignmentId")==null&&n(item.get("occupied"))==0&&!value(item.get("ipAddress")).equals(value(range.get("gateway"))));}
       return map("range",range,"items",items);
     }
   }
@@ -81,15 +82,16 @@ final class ManualAssignmentService {
           if(range==null)throw problem(404,"IP_RANGE_NOT_FOUND","地址段不存在或已删除。");
           String old=value(range.get("gateway"));if(!old.equals(expected))throw problem(409,"GATEWAY_STALE","当前网关已被其他管理员更新，请刷新网关选项后重新确认。");if(old.equals(target)){c.commit();return map("changed",false,"gateway",old,"rangeId",rangeId);}
           PhaseFourService.Net net=PhaseFourService.Net.parse(value(range.get("cidr")));if(!net.contains(PhaseFourService.Net.ipv4(target)))throw problem(400,"GATEWAY_OUT_OF_RANGE","新网关必须位于当前地址段内。");
-          Map<String,Object> targetPool=one(c,"SELECT p.id,p.ip_address AS ipAddress,p.is_active AS active,p.is_reserved AS reserved,p.reservation_reason AS reservationReason,d.id AS assignmentId FROM ip_address_pool p LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' WHERE p.ip_range_id=? AND p.ip_address=? AND p.deleted_at IS NULL",rangeId,target);
+          Map<String,Object> targetPool=one(c,"SELECT p.id,p.ip_address AS ipAddress,p.is_active AS active,p.is_reserved AS reserved,p.is_occupied AS occupied,p.reservation_reason AS reservationReason,d.id AS assignmentId FROM ip_address_pool p LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' WHERE p.ip_range_id=? AND p.ip_address=? AND p.deleted_at IS NULL",rangeId,target);
           if(targetPool==null)throw problem(400,"GATEWAY_TARGET_NOT_FOUND","新网关必须是当前地址段中的主机地址。");
+          if(n(targetPool.get("occupied"))==1)throw problem(409,"GATEWAY_TARGET_OCCUPIED","新网关已标记为占用，请先恢复为空闲后再调整。");
           if(targetPool.get("assignmentId")!=null)throw problem(409,"GATEWAY_TARGET_ASSIGNED","新网关已被有效分配，请先释放该 IP。");
           Map<String,Object> oldPool=one(c,"SELECT p.id,p.ip_address AS ipAddress,d.id AS assignmentId FROM ip_address_pool p LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' WHERE p.ip_range_id=? AND p.ip_address=? AND p.deleted_at IS NULL",rangeId,old);
           if(oldPool==null)throw problem(409,"GATEWAY_CURRENT_NOT_FOUND","当前网关对应的资源池记录不存在。");
           if(oldPool.get("assignmentId")!=null)throw problem(409,"GATEWAY_CURRENT_ASSIGNED","当前网关存在异常有效分配，请先处理后再调整。");
           String now=Instant.now().toString();
-          change(c,"UPDATE ip_address_pool SET is_active=1,is_reserved=0,reservation_reason=NULL,updated_at=? WHERE id=? AND deleted_at IS NULL",now,oldPool.get("id"));
-          change(c,"UPDATE ip_address_pool SET is_active=0,is_reserved=1,reservation_reason='网关地址',updated_at=? WHERE id=? AND deleted_at IS NULL",now,targetPool.get("id"));
+          change(c,"UPDATE ip_address_pool SET is_active=1,is_reserved=0,is_occupied=0,reservation_reason=NULL,updated_at=? WHERE id=? AND deleted_at IS NULL",now,oldPool.get("id"));
+          change(c,"UPDATE ip_address_pool SET is_active=0,is_reserved=1,is_occupied=0,reservation_reason='网关地址',updated_at=? WHERE id=? AND deleted_at IS NULL",now,targetPool.get("id"));
           try(PreparedStatement p=c.prepareStatement("UPDATE ip_range SET gateway=?,updated_at=? WHERE id=? AND gateway=? AND deleted_at IS NULL")){p.setString(1,target);p.setString(2,now);p.setLong(3,rangeId);p.setString(4,old);if(p.executeUpdate()!=1)throw new PhaseTwoService.Problem(409,"GATEWAY_STALE","当前网关已变化，请刷新后重试。");}
           String targetState=sourceState(targetPool);
           audit(c,actor,"ADJUST_GATEWAY","IP_RANGE",String.valueOf(rangeId),"SUCCESS",json.toJson(map("cidr",range.get("cidr"),"beforeGateway",old,"afterGateway",target,"beforeState","SYSTEM_RESERVED","afterState",targetState,"note",note)));
@@ -100,8 +102,8 @@ final class ManualAssignmentService {
   }
 
   private static String state(Map<String,Object> x){return state(x,x.get("gateway"));}
-  private static String state(Map<String,Object> x,Object gateway){if(x.get("assignmentId")!=null)return "ASSIGNED";if(value(x.get("ipAddress")).equals(value(gateway)))return "SYSTEM_RESERVED";if(n(x.get("reserved"))==1)return "MANUAL_RESERVED";return n(x.get("active"))==1?"AVAILABLE":"DISABLED";}
-  private static String sourceState(Map<String,Object> x){String s=state(x);return "AVAILABLE".equals(s)||"DISABLED".equals(s)||"MANUAL_RESERVED".equals(s)?s:null;}
+  private static String state(Map<String,Object> x,Object gateway){if(x.get("assignmentId")!=null)return "ASSIGNED";if(value(x.get("ipAddress")).equals(value(gateway)))return "SYSTEM_RESERVED";if(n(x.get("occupied"))==1)return "OCCUPIED";if(n(x.get("reserved"))==1)return "MANUAL_RESERVED";return n(x.get("active"))==1?"AVAILABLE":"DISABLED";}
+  private static String sourceState(Map<String,Object> x){String s=state(x);return "AVAILABLE".equals(s)||"OCCUPIED".equals(s)||"DISABLED".equals(s)||"MANUAL_RESERVED".equals(s)?s:null;}
   private Connection open()throws Exception{Connection c=DriverManager.getConnection("jdbc:sqlite:"+dbFile);try(Statement s=c.createStatement()){s.execute("PRAGMA foreign_keys=ON");s.execute("PRAGMA busy_timeout=5000");}return c;}
   private static Map<String,Object> one(Connection c,String sql,Object...args)throws Exception{try(PreparedStatement p=c.prepareStatement(sql)){bind(p,args);try(ResultSet r=p.executeQuery()){return r.next()?row(r):null;}}}
   private static List<Map<String,Object>> list(Connection c,String sql,Object...args)throws Exception{try(PreparedStatement p=c.prepareStatement(sql)){bind(p,args);try(ResultSet r=p.executeQuery()){List<Map<String,Object>> out=new ArrayList<Map<String,Object>>();while(r.next())out.add(row(r));return out;}}}
@@ -110,6 +112,7 @@ final class ManualAssignmentService {
   private static void change(Connection c,String sql,Object...args)throws Exception{try(PreparedStatement p=c.prepareStatement(sql)){bind(p,args);if(p.executeUpdate()!=1)throw problem(404,"RESOURCE_NOT_FOUND","记录不存在或已被处理。");}}
   private static boolean exists(Connection c,String sql,Object...args)throws Exception{return one(c,sql,args)!=null;}
   private static void bind(PreparedStatement p,Object...args)throws Exception{for(int i=0;i<args.length;i++){Object x=args[i];if(x==null)p.setNull(i+1,Types.VARCHAR);else if(x instanceof Long)p.setLong(i+1,(Long)x);else if(x instanceof Integer)p.setInt(i+1,(Integer)x);else p.setString(i+1,String.valueOf(x));}}
+  private static String raw(JsonObject b,String key){return !b.has(key)||b.get(key).isJsonNull()?null:b.get(key).getAsString();}
   private static String optional(JsonObject b,String key,int max){if(!b.has(key)||b.get(key).isJsonNull())return null;String v=b.get(key).getAsString().trim();if(v.isEmpty())return null;if(v.length()>max)throw problem(400,"FIELD_INVALID",key+" 格式不正确。");return v;}
   private static String required(JsonObject b,String key,int max){String v=optional(b,key,max);if(v==null)throw problem(400,"FIELD_REQUIRED",key+" 为必填项。");return v;}
   private static long number(JsonObject b,String key){try{return b.get(key).getAsLong();}catch(Exception e){throw problem(400,"FIELD_INVALID",key+" 必须是编号。");}}

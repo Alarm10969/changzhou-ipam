@@ -19,3 +19,7 @@ kylin-stage1-report-*.txt
 .probe-*/
 .release-*-preserved-*/
 outputs/
+
+# macOS filesystem metadata (not application or delivery content)
+.DS_Store
+._*

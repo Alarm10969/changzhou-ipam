@@ -35,13 +35,16 @@ public final class IpamApplication {
   private final OutletDirectoryService outletDirectory;
   private final Path staticDir;
   private final boolean secureCookie;
+  private final MaintenanceGate maintenanceGate = new MaintenanceGate();
+  private final BackupService backups;
 
-  private IpamApplication(Database db, Path staticDir, boolean secureCookie) throws IOException { this.db = db; this.phaseTwo = new PhaseTwoService(db.file); this.phaseThree = new PhaseThreeService(db.file); this.phaseFour = new PhaseFourService(db.file); this.manualAssignment = new ManualAssignmentService(db.file); this.outletDirectory = new OutletDirectoryService(db.file); this.staticDir = staticDir; this.secureCookie = secureCookie; }
+  private IpamApplication(Database db, Path staticDir, boolean secureCookie) throws Exception { this.db = db; this.phaseTwo = new PhaseTwoService(db.file); this.phaseThree = new PhaseThreeService(db.file); this.phaseFour = new PhaseFourService(db.file); this.manualAssignment = new ManualAssignmentService(db.file); this.outletDirectory = new OutletDirectoryService(db.file); this.staticDir = staticDir; this.secureCookie = secureCookie; this.backups = new BackupService(db.file, maintenanceGate, path -> new Database(path).migrate()); }
 
   public static void main(String[] args) throws Exception {
     Path data = Paths.get(env("IPAM_DATA_DIR", "data")).toAbsolutePath().normalize();
     Files.createDirectories(data);
     if (!Files.isWritable(data)) throw new IllegalStateException("数据目录不可写: " + data);
+    BackupService.recoverInterrupted(data.resolve("ipam.db"));
     Database db = new Database(data.resolve("ipam.db"));
     db.migrate(); db.bootstrapAdmin(System.getenv("IPAM_ADMIN_USERNAME"), bootstrapPassword());
     Path staticDir = Paths.get(env("IPAM_STATIC_DIR", "frontend/dist")).toAbsolutePath().normalize();
@@ -56,7 +59,17 @@ public final class IpamApplication {
     String requestId = UUID.randomUUID().toString();
     try {
       String path = x.getRequestURI().getPath();
-      if (path.startsWith("/api/v1/")) api(x, requestId, path.substring(8)); else serveStatic(x, path);
+      if (path.startsWith("/api/v1/")) {
+        String apiPath = path.substring(8);
+        if (apiPath.startsWith("backup-restore-status/") && "GET".equals(x.getRequestMethod())) {
+          respond(x, 200, backups.jobStatus(apiPath.substring("backup-restore-status/".length())));
+        } else {
+          try (MaintenanceGate.Permit permit = maintenanceGate.enterApi()) {
+            if (permit == null) throw new ApiError(503, "SYSTEM_RESTORING", "系统正在恢复数据，请稍后重试。");
+            api(x, requestId, apiPath);
+          }
+        }
+      } else serveStatic(x, path);
     } catch (ApiError e) { respond(x, e.status, error(e.code, e.getMessage(), requestId)); }
     catch (PhaseTwoService.Problem e) { respond(x,e.status,error(e.code,e.getMessage(),requestId)); }
     catch (Exception e) { e.printStackTrace(System.err); respond(x, 500, error("INTERNAL_ERROR", "系统内部错误，请联系管理员。", requestId)); }
@@ -109,6 +122,25 @@ public final class IpamApplication {
 
   private void admin(HttpExchange x, Principal p, String requestId, String path) throws Exception {
     String m=x.getRequestMethod();
+    if ("backups/status".equals(path) && "GET".equals(m)) { respond(x,200,backups.status()); return; }
+    if ("backups/download".equals(path) && "POST".equals(m)) {
+      try (BackupService.BackupFile backup = backups.download(p.id,p.username)) {
+        binaryFile(x,backup.path,"application/zip","attachment; filename="+backup.fileName);
+      }
+      return;
+    }
+    if ("backups/restore-preview".equals(path) && "POST".equals(m)) {
+      respond(x,200,backups.preview(x.getRequestBody(),query(x,"fileName"),p.id,p.username)); return;
+    }
+    if (path.matches("backups/restore-preview/[A-Za-z0-9_-]{24,128}") && "DELETE".equals(m)) {
+      backups.cancel(path.substring("backups/restore-preview/".length()),p.id); respond(x,204,null); return;
+    }
+    if ("backups/restore-confirm".equals(path) && "POST".equals(m)) {
+      respond(x,202,backups.confirm(required(body(x),"uploadId",128),p.id,p.username)); return;
+    }
+    if (path.matches("assignments/\\d+/information") && "PUT".equals(m)) {
+      respond(x,200,phaseFour.updateAssignmentInformation(parseId(path),body(x),p.id)); return;
+    }
     if ("users".equals(path) && "GET".equals(m)) { respond(x,200,map("items",db.users())); return; }
     if ("users".equals(path) && "POST".equals(m)) { createUser(x,p,requestId); return; }
     if (path.matches("users/\\d+/reset-password") && "POST".equals(m)) { resetPassword(x,p,requestId,parseId(path)); return; }
@@ -134,10 +166,10 @@ public final class IpamApplication {
     if ("exports".equals(path) && "POST".equals(m)) { JsonObject b=body(x); String type=required(b,"type",32),format=required(b,"format",8); Set<String> fields=new LinkedHashSet<>();if(b.has("fields")&&b.get("fields").isJsonArray())for(JsonElement e:b.getAsJsonArray("fields"))fields.add(e.getAsString());Map<String,String> filters=new LinkedHashMap<>();if(b.has("filters")&&b.get("filters").isJsonObject())for(Map.Entry<String,JsonElement> e:b.getAsJsonObject("filters").entrySet())filters.put(e.getKey(),e.getValue().getAsString()); byte[] data=phaseThree.exportManualAware(type,format,fields,filters,p.id);String ext="XLSX".equals(format)?"xlsx":"csv";binary(x,200,data,"XLSX".equals(format)?"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":"text/csv; charset=utf-8","attachment; filename=ipam-"+type.toLowerCase()+"-"+Instant.now().toEpochMilli()+"."+ext); return; }
     if ("applications".equals(path) && "GET".equals(m)) { respond(x,200,map("items",phaseFour.applications(query(x,"status"),query(x,"q")))); return; }
     if (path.matches("applications/\\d+/reject") && "POST".equals(m)) { phaseTwo.reject(parseId(path),p.id,required(body(x),"reason",500)); audit(p,requestId,"REJECT_APPLICATION","APPLICATION",String.valueOf(parseId(path)),"SUCCESS",null); respond(x,204,null); return; }
-    if (path.matches("applications/\\d+/approve") && "POST".equals(m)) { JsonObject b=body(x); phaseFour.approve(parseId(path),number(b,"poolId"),optional(b,"finalRangeType",32),optional(b,"approvalOpinion",500),optional(b,"overrideReason",500),optionalSwitchPort(b),optionalRaw(b,"macAddress",100),p.id); respond(x,204,null); return; }
+    if (path.matches("applications/\\d+/approve") && "POST".equals(m)) { JsonObject b=body(x); phaseFour.approve(parseId(path),number(b,"poolId"),optional(b,"finalRangeType",32),optional(b,"approvalOpinion",500),optional(b,"overrideReason",500),optionalRaw(b,"switchIp",45),optionalSwitchPort(b),optionalRaw(b,"macAddress",256),optionalRaw(b,"serialNumber",100),p.id); respond(x,204,null); return; }
     if (path.matches("applications/\\d+/candidates") && "GET".equals(m)) { respond(x,200,phaseFour.candidates(parseId(path),query(x,"rangeType"),query(x,"q"),parsePage(query(x,"page")))); return; }
     if (path.matches("assignments/\\d+/switch-port") && "PUT".equals(m)) { JsonObject b=body(x); String versionKey=b.has("assignmentVersion")?"assignmentVersion":"version"; respond(x,200,phaseFour.updateSwitchPortByAssignment(parseId(path),number(b,"poolId"),number(b,versionKey),optionalSwitchPort(b),p.id)); return; }
-    if (path.matches("assignments/\\d+/mac") && "PUT".equals(m)) { JsonObject b=body(x); String versionKey=b.has("assignmentVersion")?"assignmentVersion":"version"; respond(x,200,phaseFour.updateMacByAssignment(parseId(path),number(b,"poolId"),number(b,versionKey),optionalRaw(b,"macAddress",100),p.id)); return; }
+    if (path.matches("assignments/\\d+/mac") && "PUT".equals(m)) { JsonObject b=body(x); String versionKey=b.has("assignmentVersion")?"assignmentVersion":"version"; respond(x,200,phaseFour.updateMacByAssignment(parseId(path),number(b,"poolId"),number(b,versionKey),optionalRaw(b,"macAddress",256),p.id)); return; }
     if (path.matches("assignments/\\d+/release") && "POST".equals(m)) { JsonObject b=body(x); respond(x,200,phaseThree.forceRelease(parseId(path),p.id,optional(b,"reason",500),requestId)); return; }
     if ("available-ips".equals(path) && "GET".equals(m)) { long applicationId=Long.parseLong(query(x,"applicationId")); int page=parsePage(query(x,"page")); respond(x,200,phaseTwo.availableIpPage(applicationId,query(x,"q"),page)); return; }
     if (path.matches("import-templates/(OUTLET|IP_RANGE|IP_POOL)\\.(csv|xlsx)") && "GET".equals(m)) { String[] a=path.substring("import-templates/".length()).split("\\."); binary(x,200,phaseTwo.template(a[0],a[1].equals("csv")?"CSV":"XLSX"),a[1].equals("csv")?"text/csv; charset=utf-8":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","attachment; filename=ipam-"+a[0].toLowerCase()+"."+a[1]); return; }
@@ -173,7 +205,7 @@ public final class IpamApplication {
     if (path.matches("ip-pool/\\d+/manual-assignment") && "GET".equals(m)) { respond(x,200,manualAssignment.options(parseId(path))); return; }
     if (path.matches("ip-pool/\\d+/manual-assignment") && "POST".equals(m)) { respond(x,201,manualAssignment.register(parseId(path),body(x),p.id)); return; }
     if (path.matches("ip-pool/\\d+/switch-port") && "PUT".equals(m)) { JsonObject b=body(x); String versionKey=b.has("assignmentVersion")?"assignmentVersion":"version"; respond(x,200,phaseFour.updateSwitchPort(parseId(path),number(b,"assignmentId"),number(b,versionKey),optionalSwitchPort(b),p.id)); return; }
-    if (path.matches("ip-pool/\\d+/mac") && "PUT".equals(m)) { JsonObject b=body(x); String versionKey=b.has("assignmentVersion")?"assignmentVersion":"version"; respond(x,200,phaseFour.updateMac(parseId(path),number(b,"assignmentId"),number(b,versionKey),optionalRaw(b,"macAddress",100),p.id)); return; }
+    if (path.matches("ip-pool/\\d+/mac") && "PUT".equals(m)) { JsonObject b=body(x); String versionKey=b.has("assignmentVersion")?"assignmentVersion":"version"; respond(x,200,phaseFour.updateMac(parseId(path),number(b,"assignmentId"),number(b,versionKey),optionalRaw(b,"macAddress",256),p.id)); return; }
     if (path.matches("ip-pool/\\d+") && "PUT".equals(m)) { updatePool(x,p,requestId,parseId(path)); return; }
     if (path.matches("ip-pool/\\d+/reachability") && "POST".equals(m)) { respond(x,200,phaseFour.ping(parseId(path),p.id)); return; }
     if ("audit".equals(path) && "GET".equals(m)) { respond(x,200,map("items",db.auditRows())); return; }
@@ -208,6 +240,16 @@ public final class IpamApplication {
   private static void validatePassword(String v){String message=PasswordPolicy.validationMessage(v);if(message!=null)throw new ApiError(400,"PASSWORD_POLICY",message);}
   private static String maskFromCidr(String cidr){int n=Integer.parseInt(cidr.substring(cidr.indexOf('/')+1));long mask=n==0?0:(0xffffffffL << (32-n))&0xffffffffL;return ((mask>>>24)&255)+"."+((mask>>>16)&255)+"."+((mask>>>8)&255)+"."+(mask&255);}
   private static void respond(HttpExchange x,int status,Object body) throws IOException {x.getResponseHeaders().set("Content-Type","application/json; charset=utf-8");x.getResponseHeaders().set("X-Content-Type-Options","nosniff");if(status==204){x.sendResponseHeaders(204,-1);return;}byte[] bytes=JSON.toJson(body).getBytes(StandardCharsets.UTF_8);x.sendResponseHeaders(status,bytes.length);try(OutputStream o=x.getResponseBody()){o.write(bytes);}}
+  private static void binaryFile(HttpExchange x, Path file, String type, String disposition) throws IOException {
+    x.getResponseHeaders().set("Content-Type",type);
+    x.getResponseHeaders().set("Content-Disposition",disposition);
+    x.getResponseHeaders().set("Cache-Control","no-store");
+    x.sendResponseHeaders(200,Files.size(file));
+    try (InputStream in=Files.newInputStream(file); OutputStream out=x.getResponseBody()) {
+      byte[] buffer=new byte[16384]; int read;
+      while ((read=in.read(buffer))!=-1) out.write(buffer,0,read);
+    }
+  }
   private static void binary(HttpExchange x,int status,byte[] bytes,String type,String disposition)throws IOException{x.getResponseHeaders().set("Content-Type",type);x.getResponseHeaders().set("Content-Disposition",disposition);x.getResponseHeaders().set("X-Content-Type-Options","nosniff");x.sendResponseHeaders(status,bytes.length);try(OutputStream o=x.getResponseBody()){o.write(bytes);}}
   private static Map<String,Object> error(String c,String m,String r){return map("code",c,"message",m,"requestId",r);}
   private static Map<String,Object> map(Object...v){Map<String,Object> m=new LinkedHashMap<>();for(int i=0;i<v.length;i+=2)m.put(String.valueOf(v[i]),v[i+1]);return m;}
@@ -237,7 +279,7 @@ public final class IpamApplication {
   private static final class Database {
     private final Path file; Database(Path file){this.file=file;}
     Connection open() throws SQLException {Connection c=DriverManager.getConnection("jdbc:sqlite:"+file);try(Statement s=c.createStatement()){s.execute("PRAGMA foreign_keys=ON");s.execute("PRAGMA busy_timeout=5000");s.execute("PRAGMA synchronous=FULL");}return c;}
-    void migrate() throws Exception {try(Connection c=open()){try(Statement s=c.createStatement()){s.execute("PRAGMA journal_mode=WAL");}boolean legacy=hasHistory(c);try(Statement s=c.createStatement()){s.execute("CREATE TABLE IF NOT EXISTS schema_history (version TEXT PRIMARY KEY, description TEXT NOT NULL, checksum TEXT NOT NULL, installed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))) ");} apply(c,"001","stage1 foundation","/db/migration/V001__stage1_foundation.sql"); apply(c,"002","remove backup role and tech scope","/db/migration/V002__remove_backup_role_and_tech_scope.sql"); if(legacy&&!hasVersion(c,"003")){try(Statement s=c.createStatement();ResultSet r=s.executeQuery("SELECT COUNT(*) FROM sys_user WHERE role='ADMIN'")){r.next();if(r.getInt(1)!=1)throw new IllegalStateException("V003 upgrade requires exactly one existing ADMIN; stop and repair the database manually.");}} apply(c,"003","initial admin protection","/db/migration/V003__initial_admin_protection.sql"); apply(c,"004","bulk import and application workflow","/db/migration/V004__bulk_import_and_application_workflow.sql"); apply(c,"005","outlet range and default pool","/db/migration/V005__outlet_range_and_default_pool.sql"); apply(c,"006","organization soft delete and network defaults","/db/migration/V006__organization_soft_delete_and_network_defaults.sql"); apply(c,"007","immediate release notification statistics export","/db/migration/V007__immediate_release_notification_statistics_export.sql"); apply(c,"008","outlet directory information","/db/migration/V008__outlet_directory_information.sql"); apply(c,"009","remove redundant managed outlet number","/db/migration/V009__remove_redundant_managed_outlet_no.sql"); apply(c,"010","six network planning and asset mapping","/db/migration/V010__six_network_planning_and_asset_mapping.sql"); apply(c,"011","outlet plan batch import","/db/migration/V011__outlet_plan_batch_import.sql"); apply(c,"012","dynamic segment prefix and remove override reason","/db/migration/V012__dynamic_segment_prefix_and_remove_override_reason.sql"); applyIpApplicationRebuild(c,"013","allow technology PC applicant identity","/db/migration/V013__allow_tech_pc_identity.sql"); applyIpApplicationRebuild(c,"014","preserve legacy PC identity without inference","/db/migration/V014__preserve_legacy_pc_identity.sql"); applySoftDeleteReuseRebuild(c,"015","allow soft-deleted outlet and network reuse","/db/migration/V015__allow_soft_deleted_network_reuse.sql"); applySoftDeleteReuseRebuild(c,"016","allow soft-deleted branch and user reuse","/db/migration/V016__allow_soft_deleted_branch_and_user_reuse.sql"); applySoftDeleteReuseRebuild(c,"017","reset demo business data and simplify assets","/db/migration/V017__reset_demo_business_data_and_simplify_assets.sql"); apply(c,"018","restore override reason for cross-range approval","/db/migration/V018__restore_override_reason_for_cross_range_approval.sql"); apply(c,"019","password policy and switch port","/db/migration/V019__password_policy_and_switch_port.sql"); apply(c,"021","MAC address snapshots","/db/migration/V021__mac_address.sql");}}
+    void migrate() throws Exception {try(Connection c=open()){try(Statement s=c.createStatement()){s.execute("PRAGMA journal_mode=WAL");}boolean legacy=hasHistory(c);try(Statement s=c.createStatement()){s.execute("CREATE TABLE IF NOT EXISTS schema_history (version TEXT PRIMARY KEY, description TEXT NOT NULL, checksum TEXT NOT NULL, installed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))) ");} apply(c,"001","stage1 foundation","/db/migration/V001__stage1_foundation.sql"); apply(c,"002","remove backup role and tech scope","/db/migration/V002__remove_backup_role_and_tech_scope.sql"); if(legacy&&!hasVersion(c,"003")){try(Statement s=c.createStatement();ResultSet r=s.executeQuery("SELECT COUNT(*) FROM sys_user WHERE role='ADMIN'")){r.next();if(r.getInt(1)!=1)throw new IllegalStateException("V003 upgrade requires exactly one existing ADMIN; stop and repair the database manually.");}} apply(c,"003","initial admin protection","/db/migration/V003__initial_admin_protection.sql"); apply(c,"004","bulk import and application workflow","/db/migration/V004__bulk_import_and_application_workflow.sql"); apply(c,"005","outlet range and default pool","/db/migration/V005__outlet_range_and_default_pool.sql"); apply(c,"006","organization soft delete and network defaults","/db/migration/V006__organization_soft_delete_and_network_defaults.sql"); apply(c,"007","immediate release notification statistics export","/db/migration/V007__immediate_release_notification_statistics_export.sql"); apply(c,"008","outlet directory information","/db/migration/V008__outlet_directory_information.sql"); apply(c,"009","remove redundant managed outlet number","/db/migration/V009__remove_redundant_managed_outlet_no.sql"); apply(c,"010","six network planning and asset mapping","/db/migration/V010__six_network_planning_and_asset_mapping.sql"); apply(c,"011","outlet plan batch import","/db/migration/V011__outlet_plan_batch_import.sql"); apply(c,"012","dynamic segment prefix and remove override reason","/db/migration/V012__dynamic_segment_prefix_and_remove_override_reason.sql"); applyIpApplicationRebuild(c,"013","allow technology PC applicant identity","/db/migration/V013__allow_tech_pc_identity.sql"); applyIpApplicationRebuild(c,"014","preserve legacy PC identity without inference","/db/migration/V014__preserve_legacy_pc_identity.sql"); applySoftDeleteReuseRebuild(c,"015","allow soft-deleted outlet and network reuse","/db/migration/V015__allow_soft_deleted_network_reuse.sql"); applySoftDeleteReuseRebuild(c,"016","allow soft-deleted branch and user reuse","/db/migration/V016__allow_soft_deleted_branch_and_user_reuse.sql"); applySoftDeleteReuseRebuild(c,"017","reset demo business data and simplify assets","/db/migration/V017__reset_demo_business_data_and_simplify_assets.sql"); apply(c,"018","restore override reason for cross-range approval","/db/migration/V018__restore_override_reason_for_cross_range_approval.sql"); apply(c,"019","password policy and switch port","/db/migration/V019__password_policy_and_switch_port.sql"); apply(c,"021","MAC address snapshots","/db/migration/V021__mac_address.sql"); apply(c,"022","resource maintenance and occupied IP state","/db/migration/V022__resource_maintenance.sql");}}
     private boolean hasHistory(Connection c)throws SQLException {try(Statement s=c.createStatement();ResultSet r=s.executeQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_history'")){return r.next();}}
     private boolean hasVersion(Connection c,String v)throws SQLException {try(PreparedStatement p=c.prepareStatement("SELECT 1 FROM schema_history WHERE version=?")){p.setString(1,v);try(ResultSet r=p.executeQuery()){return r.next();}}}
     void apply(Connection c,String v,String d,String resource) throws Exception {
@@ -338,9 +380,36 @@ public final class IpamApplication {
           Map<String,Object> detail=safeAuditDetail(row.get("detailJson"));
           for(String key:Arrays.asList("ipAddress","cidr","sourceState","beforeGateway","afterGateway","beforeState","afterState","assetType","assetName","responsibleTechUserId","note"))if(detail.containsKey(key))row.put(key,detail.get(key));
         }
+        if ("UPDATE_ASSIGNMENT_INFORMATION".equals(row.get("action"))) {
+          row.put("changeBefore",assignmentAuditSummary(row.get("detailJson"),"before"));
+          row.put("changeAfter",assignmentAuditSummary(row.get("detailJson"),"after"));
+        }
         row.remove("detailJson");
       }
       return out;
+    }
+    private static String assignmentAuditSummary(Object raw,String side) {
+      try {
+        JsonElement parsed=JsonParser.parseString(raw==null?"":String.valueOf(raw));
+        if(!parsed.isJsonObject())return null;
+        JsonObject detail=parsed.getAsJsonObject();
+        if(!detail.has("before")||!detail.get("before").isJsonObject()||!detail.has("after")||!detail.get("after").isJsonObject())return null;
+        JsonObject before=detail.getAsJsonObject("before"),after=detail.getAsJsonObject("after"),chosen=detail.getAsJsonObject(side);
+        String[] keys={"resourceCode","switchIp","switchPort","macAddress","serialNumber"};
+        String[] labels={"资源编码","交换机 IP","端口号","MAC","序列号"};
+        List<String> parts=new ArrayList<>();
+        for(int i=0;i<keys.length;i++) {
+          JsonElement old=before.get(keys[i]),next=after.get(keys[i]);
+          if(Objects.equals(old,next))continue;
+          JsonElement value=chosen.get(keys[i]);
+          if(value==null||value.isJsonNull()){parts.add(labels[i]+"：—");continue;}
+          if(!value.isJsonPrimitive()||!value.getAsJsonPrimitive().isString())continue;
+          String text=value.getAsString();
+          if(text.length()>256)continue;
+          parts.add(labels[i]+"："+text);
+        }
+        return String.join("；",parts);
+      } catch(RuntimeException ignored) {return null;}
     }
     private static Map<String,Object> safeAuditDetail(Object raw){
       Map<String,Object> result=new LinkedHashMap<>();
@@ -356,7 +425,7 @@ public final class IpamApplication {
       return result;
     }
     private static String safeAuditPort(Object value){if(value==null)return "—";String text=String.valueOf(value);return text.trim().isEmpty()?"—":text;}
-    private static String safeAuditMac(Object value){if(value==null)return "—";String text=String.valueOf(value);return text.trim().isEmpty()?"—":text.length()>17?text.substring(0,17):text;}
+    private static String safeAuditMac(Object value){if(value==null)return "—";String text=String.valueOf(value);return text.trim().isEmpty()?"—":text.length()>256?text.substring(0,256):text;}
     void audit(Long actor,String req,String action,String type,String target,String result,String detail)throws Exception{try(Connection c=open();PreparedStatement p=c.prepareStatement("INSERT INTO audit_log(request_id,actor_user_id,action,target_type,target_id,result,detail_json) VALUES(?,?,?,?,?,?,?)")){p.setString(1,req);if(actor==null)p.setNull(2,Types.INTEGER);else p.setLong(2,actor);p.setString(3,action);p.setString(4,type);p.setString(5,target);p.setString(6,result);p.setString(7,detail);p.executeUpdate();}}
     private static Principal user(ResultSet r)throws SQLException{Principal p=new Principal();p.id=r.getLong("id");p.username=r.getString("username");p.realName=r.getString("real_name");p.role=r.getString("role");p.passwordHash=r.getString("password_hash");p.mustChangePassword=r.getInt("must_change_password")==1;return p;}
     private static void bind(PreparedStatement p,Object...v)throws SQLException{for(int i=0;i<v.length;i++){Object x=v[i];if(x==null)p.setNull(i+1,Types.VARCHAR);else if(x instanceof Long)p.setLong(i+1,(Long)x);else if(x instanceof Integer)p.setInt(i+1,(Integer)x);else p.setString(i+1,String.valueOf(x));}}

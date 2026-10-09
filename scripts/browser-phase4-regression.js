@@ -83,7 +83,7 @@ async function main() {
   await until(() => evaluate("!!document.querySelector('#go')"), 'login form missing');
   await evaluate("document.querySelector('#username').value='admin';document.querySelector('#password').value='test';document.querySelector('#go').click();true");
   await until(() => evaluate("!!document.querySelector('[data-v=applications]')"), 'admin navigation missing');
-  const displayedVersion = await evaluate("document.querySelector('.brand em').textContent"); if (displayedVersion !== '3.8.2 · V024') fail('page header version is not V024');
+  const displayedVersion = await evaluate("document.querySelector('.brand em').textContent"); if (displayedVersion !== '3.9.0 · V025') fail('page header version is not V025');
   await evaluate("document.querySelector('[data-v=applications]').click();true");
   await until(() => evaluate("!!document.querySelector('[data-approve]')"), 'pending application missing');
   await evaluate("document.querySelector('[data-approve]').click();true");
@@ -95,18 +95,18 @@ async function main() {
   const approval = await evaluate("window.__phase4Requests.find(function(x){return x.path.indexOf('admin/applications/42/approve')>=0;})"); if (!approval || !approval.body || approval.body.switchPort !== 'GE0/0/1' || approval.body.macAddress !== 'aabbccddeeff') fail('approval request did not carry switch port and MAC');
   const narrowApproval = await evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"); if (!narrowApproval) fail('approval page overflows at narrow width');
   await evaluate("document.querySelector('[data-v=pool]').click();true");
-  await until(() => evaluate("!!document.querySelector('[data-port]') && !!document.querySelector('[data-mac]')"), 'pool switch-port and MAC actions missing');
-  await evaluate("document.querySelector('[data-port]').click();true");
+  await until(() => evaluate("!!document.querySelector('[data-information]')"), 'pool switch-port and MAC actions missing');
+  await evaluate("document.querySelector('[data-information]').click();true");
   await until(() => evaluate("!!document.querySelector('#switchPort')"), 'pool switch-port dialog missing');
   await evaluate("document.querySelector('#switchPort').value='Eth-Trunk1';document.querySelector('#switchPort').dispatchEvent(new Event('input'));document.querySelector('#saveEdit').click();true");
   await until(() => evaluate("!document.querySelector('#editModal')"), 'pool switch-port dialog did not close');
-  await until(() => evaluate("document.querySelector('#notice') && document.querySelector('#notice').textContent.indexOf('交换机端口已保存')>=0"), 'pool switch-port success feedback missing');
-  const poolUpdate = await evaluate("window.__phase4Requests.find(function(x){return x.path.indexOf('admin/ip-pool/10/switch-port')>=0;})"); if (!poolUpdate || !poolUpdate.body || poolUpdate.body.switchPort !== 'Eth-Trunk1' || poolUpdate.body.assignmentVersion !== 3) fail('pool switch-port request did not carry guarded update');
-  await evaluate("document.querySelector('[data-mac]').click();true");
+  await until(() => evaluate("document.querySelector('#notice') && document.querySelector('#notice').textContent.indexOf('分配信息已保存')>=0"), 'pool switch-port success feedback missing');
+  const poolUpdate = await evaluate("window.__phase4Requests.find(function(x){return x.path.indexOf('admin/assignments/77/information')>=0 && x.body.switchPort==='Eth-Trunk1';})"); if (!poolUpdate || !poolUpdate.body || poolUpdate.body.switchPort !== 'Eth-Trunk1' || poolUpdate.body.expectedVersion !== 3 || poolUpdate.body.poolId !== 10) fail('pool switch-port request did not carry guarded update');
+  await evaluate("document.querySelector('[data-information]').click();true");
   await until(() => evaluate("!!document.querySelector('#macAddress')"), 'pool MAC dialog missing');
   await evaluate("document.querySelector('#macAddress').value='112233445566';document.querySelector('#macAddress').dispatchEvent(new Event('input'));document.querySelector('#saveEdit').click();true");
   await until(() => evaluate("!document.querySelector('#editModal')"), 'pool MAC dialog did not close');
-  const macUpdate = await evaluate("window.__phase4Requests.find(function(x){return x.path.indexOf('admin/ip-pool/10/mac')>=0;})"); if (!macUpdate || !macUpdate.body || macUpdate.body.macAddress !== '112233445566' || macUpdate.body.assignmentVersion !== 3) fail('pool MAC request did not carry guarded update');
+  const macUpdate = await evaluate("window.__phase4Requests.find(function(x){return x.path.indexOf('admin/assignments/77/information')>=0 && x.body.macAddress==='112233445566';})"); if (!macUpdate || !macUpdate.body || macUpdate.body.macAddress !== '112233445566' || macUpdate.body.expectedVersion !== 3 || macUpdate.body.poolId !== 10) fail('pool MAC request did not carry guarded update');
   await evaluate("document.querySelector('[data-manual]').click();true");
   await wait(200); const manualState = await evaluate("({modal:!!document.querySelector('#manualAssetType'),requests:window.__phase4Requests.slice(-3),manualButtons:document.querySelectorAll('[data-manual]').length,errors:window.__phase4Errors})"); if (!manualState.modal) fail('manual assignment dialog missing: ' + JSON.stringify(manualState));
   await evaluate("document.querySelector('#manualAssetType').value='TECH';document.querySelector('#manualAssetType').dispatchEvent(new Event('change'));document.querySelector('#manualAssetId').value='1';document.querySelector('#manualAssetId').dispatchEvent(new Event('change'));true");
@@ -160,7 +160,7 @@ async function main() {
   await evaluate("document.querySelector('[data-v=notifications]').click();true"); await until(() => evaluate("document.querySelector('#table') && document.querySelector('#table').textContent.indexOf('管理员已处理')>=0"), 'tech notification page missing');
   if (await evaluate("document.body.textContent.indexOf('交换机端口')<0") === false) fail('tech notification page leaked switch port');
   const leakedRequest = await evaluate("window.__phase4Requests.some(function(x){return JSON.stringify(x.body||{}).indexOf('switchPort')>=0 && x.path.indexOf('admin/')<0;})"); if (leakedRequest) fail('tech request carried switchPort field');
-  console.log('PASS|BROWSER_PHASE4|v024-header|password-hints|approval-port-mac|pool-port-mac-feedback|manual-assignment-mac|gateway-adjustment|gateway-stale-refresh|audit-summary|range-conflict-suggestion|account-reuse-confirmation|narrow-screen|tech-port-mac-isolation');
+  console.log('PASS|BROWSER_PHASE4|v025-header|password-hints|approval-port-mac|pool-information-port-mac-feedback|manual-assignment-mac|gateway-adjustment|gateway-stale-refresh|audit-summary|range-conflict-suggestion|account-reuse-confirmation|narrow-screen|tech-port-mac-isolation');
   ws.close();
 }
 main().catch(error => { console.error(error.stack || error); process.exitCode = 1; }).finally(() => { if (browser) browser.kill(); if (server) server.close(); });
