@@ -56,6 +56,36 @@ final class PhaseTwoService {
   void reject(long app,long actor,String reason)throws Exception {if(reason==null||reason.trim().isEmpty())throw new Problem(400,"REJECTION_REASON_REQUIRED","驳回原因不能为空。");synchronized(WRITE_LOCK){try(Connection c=open()){c.setAutoCommit(false);try(PreparedStatement p=c.prepareStatement("UPDATE ip_application SET status='REJECTED',rejection_reason=?,reviewed_by=?,reviewed_at=?,updated_at=?,version=version+1 WHERE id=? AND status='PENDING'")){String now=Instant.now().toString();p.setString(1,reason.trim());p.setLong(2,actor);p.setString(3,now);p.setString(4,now);p.setLong(5,app);if(p.executeUpdate()!=1)throw new Problem(409,"APPLICATION_ALREADY_REVIEWED","申请已被处理。");}notifyUser(c,app,"您的 IP 申请已被驳回："+reason.trim());audit(c,actor,"REJECT_APPLICATION","APPLICATION",String.valueOf(app),"SUCCESS",null);c.commit();}}}
   void approve(long app,long pool,long actor)throws Exception {synchronized(WRITE_LOCK){try(Connection c=open()){c.setAutoCommit(false);try{App a=loadPending(c,app);try(PreparedStatement p=c.prepareStatement("SELECT p.id FROM ip_address_pool p JOIN ip_range r ON r.id=p.ip_range_id LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' WHERE p.id=? AND r.outlet_id=? AND r.is_active=1 AND r.deleted_at IS NULL AND p.is_active=1 AND p.is_reserved=0 AND p.is_occupied=0 AND p.deleted_at IS NULL AND d.id IS NULL")){p.setLong(1,pool);p.setLong(2,a.outlet);if(!p.executeQuery().next())throw new Problem(409,"IP_NOT_AVAILABLE","所选 IP 已不可用或不属于申请网点。");}try(PreparedStatement p=c.prepareStatement("INSERT INTO ip_assignment(application_id,ip_pool_id,resource_code,assigned_by) VALUES(?,?,?,?)")){p.setLong(1,app);p.setLong(2,pool);p.setString(3,a.assetCode);p.setLong(4,actor);p.executeUpdate();}try(PreparedStatement p=c.prepareStatement("UPDATE ip_application SET status='APPROVED',reviewed_by=?,reviewed_at=?,updated_at=?,version=version+1 WHERE id=? AND status='PENDING'")){String now=Instant.now().toString();p.setLong(1,actor);p.setString(2,now);p.setString(3,now);p.setLong(4,app);if(p.executeUpdate()!=1)throw new Problem(409,"APPLICATION_ALREADY_REVIEWED","申请已被处理。");}notifyUser(c,app,"您的 IP 申请已审批通过，分配结果可在我的申请中查看。");audit(c,actor,"APPROVE_APPLICATION","APPLICATION",String.valueOf(app),"SUCCESS",map("poolId",pool));c.commit();}catch(Exception e){c.rollback();throw e;}}}}
 
+  Map<String,Object> rangePage(Long branchId, Long outletId, String type, String keyword, int page, int size) throws Exception {
+    if (size != 20 && size != 50 && size != 100)
+      throw new Problem(400, "PAGE_SIZE_INVALID", "每页条数可选 20、50 或 100。");
+    String from = " FROM ip_range r JOIN branch b ON b.id=r.branch_id LEFT JOIN outlet o ON o.id=r.outlet_id"
+        + " WHERE r.deleted_at IS NULL AND b.deleted_at IS NULL AND (o.id IS NULL OR o.deleted_at IS NULL)";
+    List<Object> args = new ArrayList<>();
+    if (branchId != null) { from += " AND r.branch_id=?"; args.add(branchId); }
+    if (outletId != null) { from += " AND r.outlet_id=?"; args.add(outletId); }
+    if (type != null && !type.isEmpty()) { from += " AND r.range_type=?"; args.add(type); }
+    if (keyword != null && !keyword.trim().isEmpty()) {
+      from += " AND (instr(r.cidr,?)>0 OR instr(r.gateway,?)>0)";
+      args.add(keyword.trim()); args.add(keyword.trim());
+    }
+    // Read the total and the page from one snapshot, including during soft deletion.
+    try (Connection c = open()) {
+      c.setAutoCommit(false);
+      long total;
+      try (PreparedStatement count = c.prepareStatement("SELECT count(*)" + from)) {
+        for (int i=0; i<args.size(); i++) count.setObject(i+1,args.get(i));
+        try (ResultSet result = count.executeQuery()) { result.next(); total = result.getLong(1); }
+      }
+      int actualPage = (int)Math.min(page, Math.max(1L,(total + size - 1) / size));
+      String fields = "SELECT r.id,r.cidr,r.gateway,r.range_type AS rangeType,b.name AS branchName,o.name AS outletName";
+      try (PreparedStatement select = c.prepareStatement(fields + from + " ORDER BY b.name,o.name,r.cidr,r.id LIMIT ? OFFSET ?")) {
+        args.add(size); args.add((long)(actualPage-1)*size);
+        for (int i=0; i<args.size(); i++) select.setObject(i+1,args.get(i));
+        return map("items",rows(select),"page",actualPage,"pageSize",size,"total",total);
+      }
+    }
+  }
   List<Map<String,Object>> ranges()throws Exception{return query0("SELECT r.id,r.branch_id AS branchId,b.name AS branchName,r.outlet_id AS outletId,o.name AS outletName,o.code AS outletCode,r.cidr,r.range_type AS rangeType,r.planning_group AS planningGroup,r.rule_version_id AS ruleVersionId,r.subnet_mask AS subnetMask,r.gateway,r.dns_primary AS dnsPrimary,r.dns_secondary AS dnsSecondary,r.is_active AS active,(SELECT count(*) FROM ip_address_pool p WHERE p.ip_range_id=r.id AND p.deleted_at IS NULL) AS poolTotal,(SELECT count(*) FROM ip_address_pool p LEFT JOIN ip_assignment a ON a.ip_pool_id=p.id AND a.status='ASSIGNED' WHERE p.ip_range_id=r.id AND p.is_active=1 AND p.is_reserved=0 AND p.is_occupied=0 AND p.deleted_at IS NULL AND a.id IS NULL) AS availableTotal,(SELECT count(*) FROM ip_assignment a JOIN ip_address_pool p ON p.id=a.ip_pool_id WHERE p.ip_range_id=r.id AND a.status='ASSIGNED') AS assignmentCount FROM ip_range r JOIN branch b ON b.id=r.branch_id LEFT JOIN outlet o ON o.id=r.outlet_id WHERE r.deleted_at IS NULL AND b.deleted_at IS NULL AND (o.id IS NULL OR o.deleted_at IS NULL) ORDER BY b.name,o.name,r.cidr");}
 
   Map<String,Object> poolItems(long rangeId,String term,int page)throws Exception{return poolItems(null,null,Long.valueOf(rangeId),term,page);}

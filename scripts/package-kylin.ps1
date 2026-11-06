@@ -19,7 +19,7 @@ if ($manifestBytes -contains 13) { throw 'Release checksum manifest must use Uni
 $delivery = Join-Path $projectRoot 'deliverables'
 New-Item -ItemType Directory -Force $delivery | Out-Null
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$zip = Join-Path $delivery ("ipam-stage4-v025-resource-maintenance-kylin-arm64-$stamp.zip")
+$zip = Join-Path $delivery ("ipam-stage4-v031-directory-lines-kylin-arm64-$stamp.zip")
 if (Test-Path -LiteralPath $zip) { throw "Delivery already exists: $zip" }
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem

@@ -32,6 +32,8 @@ Copy-Item (Join-Path $projectRoot 'docs\phase-4-mac-address-requirements-2026-09
 New-Item -ItemType Directory -Force (Join-Path $OutputDirectory 'docs\acceptance') | Out-Null
 Copy-Item (Join-Path $projectRoot 'docs\acceptance\phase-4-v023-mac-independent-acceptance-2026-09-18.md') (Join-Path $OutputDirectory 'docs\acceptance') -Force
 Copy-Item (Join-Path $projectRoot 'docs\requirements-v025-2026-10-09.md') (Join-Path $OutputDirectory 'docs') -Force
+Copy-Item (Join-Path $projectRoot 'docs\requirements-v026-assignment-import-2026-10-28.md') (Join-Path $OutputDirectory 'docs') -Force
+Copy-Item (Join-Path $projectRoot 'docs\requirements-v027-pool-asset-filter-2026-10-28.md') (Join-Path $OutputDirectory 'docs') -Force
 Copy-Item (Join-Path $projectRoot 'README.md') (Join-Path $OutputDirectory 'README.md') -Force
 Copy-Item (Join-Path $projectRoot 'VERSION.txt') (Join-Path $OutputDirectory 'VERSION.txt') -Force
 Copy-Item (Join-Path $backend 'dependencies.sha256') (Join-Path $OutputDirectory 'dependencies.sha256') -Force

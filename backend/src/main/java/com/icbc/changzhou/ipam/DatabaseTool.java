@@ -10,6 +10,16 @@ public final class DatabaseTool {
   public static void main(String[] args) throws Exception {
     if (args.length < 2 || args.length > 4) throw new IllegalArgumentException("用法: DatabaseTool check <db> | backup <db> <backup.db> | restore <db> <backup.db> | reset-admin <db> <password-file> [username]");
     Path db=Paths.get(args[1]).toAbsolutePath().normalize();
+    if("admin-status".equals(args[0])) {
+      if(!Files.isRegularFile(db)){System.out.println("MISSING");return;}
+      try(Connection c=DriverManager.getConnection("jdbc:sqlite:"+db.toUri()+"?mode=ro");Statement st=c.createStatement()) {
+        try(ResultSet tables=st.executeQuery("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='sys_user'")) {
+          if(tables.next()&&tables.getInt(1)==0){System.out.println("MISSING");return;}
+        }
+        try(ResultSet r=st.executeQuery("SELECT count(*) FROM sys_user WHERE role='ADMIN'")) {System.out.println(r.next()&&r.getInt(1)>0?"EXISTS":"MISSING");}
+      }
+      return;
+    }
     if("check".equals(args[0])) { check(db); return; }
     if("reset-admin".equals(args[0])) { if(args.length<3||args.length>4) throw new IllegalArgumentException("reset-admin 需要数据库和密码文件。"); resetAdmin(db,Paths.get(args[2]).toAbsolutePath().normalize(),args.length==4?args[3]:"admin"); return; }
     if(args.length!=3) throw new IllegalArgumentException("backup/restore 需要数据库和备份文件路径。");

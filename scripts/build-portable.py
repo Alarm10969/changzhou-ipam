@@ -19,6 +19,8 @@ SMOKES = [
     "StageTenPlanningOverlapSmokeTest", "StageElevenManualAssignmentGatewaySmokeTest",
     "StageTwelveV019UpgradeSmokeTest", "StageThirteenMacAddressSmokeTest",
     "StageFourteenResourceMaintenanceSmokeTest", "StageFifteenBackupRestoreSmokeTest",
+    "StageSixteenAssignmentImportSmokeTest", "StageSeventeenPoolAssetFilterSmokeTest",
+    "StageEighteenBranchSetupSmokeTest", "StageNineteenDirectoryLinesSmokeTest",
 ]
 
 
@@ -47,6 +49,7 @@ def main():
     parser.add_argument("--test", action="store_true")
     parser.add_argument("--http-test", action="store_true", help="Run real HTTP integration checks against an isolated database")
     parser.add_argument("--package", action="store_true")
+    parser.add_argument("--branch-package", action="store_true", help="Create a clean delivery with curated onboarding documentation and no business data")
     args = parser.parse_args()
     suffix = ".exe" if os.name == "nt" else ""
     java_bin = args.java_home / "bin" if args.java_home else None
@@ -64,7 +67,7 @@ def main():
         if digest(path).lower() != expected.lower():
             raise RuntimeError("Offline dependency checksum mismatch: " + path.name)
     print("PASS|OFFLINE_DEPENDENCIES", flush=True)
-    out = ROOT / ".local-v025-build"
+    out = ROOT / ".local-v031-build"
     marker = out / ".ipam-generated"
     if out.exists():
         if not marker.is_file():
@@ -95,6 +98,8 @@ def main():
         shutil.copytree(source, release / folder, ignore=shutil.ignore_patterns("dist"))
     shutil.copytree(ROOT / "docs/release", release / "docs")
     shutil.copy2(ROOT / "docs/requirements-v025-2026-10-09.md", release / "docs")
+    shutil.copy2(ROOT / "docs/requirements-v026-assignment-import-2026-10-28.md", release / "docs")
+    shutil.copy2(ROOT / "docs/requirements-v027-pool-asset-filter-2026-10-28.md", release / "docs")
     for file in ["README.md", "VERSION.txt"]:
         shutil.copy2(ROOT / file, release / file)
     shutil.copy2(ROOT / "backend/dependencies.sha256", release / "dependencies.sha256")
@@ -111,7 +116,7 @@ def main():
         delivery = ROOT / "deliverables"
         delivery.mkdir(exist_ok=True)
         stamp = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d-%H%M%S")
-        target = delivery / ("ipam-stage4-v025-resource-maintenance-kylin-arm64-" + stamp + ".zip")
+        target = delivery / ("ipam-stage4-v031-directory-lines-kylin-arm64-" + stamp + ".zip")
         with zipfile.ZipFile(target, "x", zipfile.ZIP_DEFLATED) as archive:
             for file in sorted(x for x in release.rglob("*") if x.is_file()):
                 archive.write(file, file.relative_to(release).as_posix())
@@ -122,6 +127,36 @@ def main():
                     raise RuntimeError("Delivery verification failed: " + name)
         print("PASS|DELIVERY|" + str(target), flush=True)
         print("SHA256|" + digest(target), flush=True)
+    if args.branch_package:
+        clean = out / "branch-package"
+        clean.mkdir()
+        for folder in ["lib", "frontend", "deploy"]:
+            shutil.copytree(release / folder, clean / folder)
+        for file in ["ipam-stage3.jar", "VERSION.txt", "dependencies.sha256"]:
+            shutil.copy2(release / file, clean / file)
+        shutil.copy2(ROOT / "docs/release/stage4-v029-branch-setup.md", clean / "README.md")
+        approved_files = sorted(x for x in clean.rglob("*") if x.is_file())
+        forbidden = {"data", "backups", "ipam.conf", "samples"}
+        for file in approved_files:
+            if forbidden.intersection(file.relative_to(clean).parts) or file.suffix in {".db", ".log", ".xlsx", ".xls"}:
+                raise RuntimeError("Business/local file in clean delivery: " + file.name)
+        (clean / "release-files.sha256").write_text("".join(digest(x) + "  " + x.relative_to(clean).as_posix() + "\n" for x in approved_files), encoding="ascii")
+        delivery = ROOT / "deliverables"
+        delivery.mkdir(exist_ok=True)
+        stamp = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d-%H%M%S")
+        target = delivery / ("ipam-v030-clean-branch-kylin-arm64-" + stamp + ".zip")
+        with zipfile.ZipFile(target, "x", zipfile.ZIP_DEFLATED) as archive:
+            for file in sorted(x for x in clean.rglob("*") if x.is_file()):
+                archive.write(file, file.relative_to(clean).as_posix())
+        with zipfile.ZipFile(target) as archive:
+            assert archive.testzip() is None
+            for line in archive.read("release-files.sha256").decode("ascii").splitlines():
+                expected, name = line.split("  ", 1)
+                if hashlib.sha256(archive.read(name)).hexdigest() != expected:
+                    raise RuntimeError("Clean package checksum mismatch: " + name)
+        print("PASS|CLEAN_BRANCH_DELIVERY|" + str(target), flush=True)
+        print("SHA256|" + digest(target), flush=True)
+
 
 
 if __name__ == "__main__":

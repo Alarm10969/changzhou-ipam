@@ -31,7 +31,7 @@ final class BackupService implements AutoCloseable {
     "preserve_legacy_pc_identity", "allow_soft_deleted_network_reuse",
     "allow_soft_deleted_branch_and_user_reuse", "reset_demo_business_data_and_simplify_assets",
     "restore_override_reason_for_cross_range_approval", "password_policy_and_switch_port",
-    "manual_assignment_and_gateway", "mac_address", "resource_maintenance"
+    "manual_assignment_and_gateway", "mac_address", "resource_maintenance", "assignment_batch_import", "outlet_directory_lines"
   };
   private final Path db, root, marker, metadata;
   private final MaintenanceGate gate;
@@ -306,7 +306,7 @@ final class BackupService implements AutoCloseable {
     return result;
   }
   private static Map<String,Object> counts(Path path) throws Exception {
-    String[] tables={"sys_user","branch","outlet","ip_range","ip_address_pool","ip_application","ip_assignment","ip_release_event","audit_log"};
+    String[] tables={"sys_user","branch","outlet","ip_range","ip_address_pool","ip_application","ip_assignment","ip_release_event","audit_log","assignment_import_job","assignment_import_row","outlet_directory","directory_import_job"};
     Map<String,Object> result=new LinkedHashMap<>();
     try (Connection c=open(path); Statement s=c.createStatement()) {
       for(String table:tables)try(ResultSet r=s.executeQuery("SELECT count(*) FROM "+table)){r.next();result.put(table,r.getLong(1));}
@@ -343,6 +343,12 @@ final class BackupService implements AutoCloseable {
         try(Statement s=c.createStatement()) {
           s.executeUpdate("UPDATE bulk_import_job SET status='EXPIRED' WHERE status IN ('VALIDATING','PREVIEW_READY')");
           s.executeUpdate("UPDATE outlet_plan_import_job SET status='EXPIRED' WHERE status='PREVIEW_READY'");
+          boolean hasAssignmentImports;
+          try(ResultSet r=s.executeQuery("SELECT 1 FROM sqlite_master WHERE type='table' AND name='assignment_import_job'")){hasAssignmentImports=r.next();}
+          try(ResultSet r=s.executeQuery("SELECT 1 FROM sqlite_master WHERE name='directory_import_job'")) {
+            if(r.next()) { try(Statement expire=c.createStatement()){expire.executeUpdate("UPDATE directory_import_job SET status='EXPIRED' WHERE status='READY'");} }
+          }
+          if(hasAssignmentImports)s.executeUpdate("UPDATE assignment_import_job SET status='EXPIRED' WHERE status='PREVIEW_READY'");
         }
         c.commit();
       } catch(Exception e){c.rollback();throw e;}

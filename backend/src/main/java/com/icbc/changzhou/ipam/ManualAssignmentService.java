@@ -27,38 +27,79 @@ final class ManualAssignmentService {
   }
 
   Map<String,Object> register(long poolId,JsonObject b,long actor)throws Exception{
-    long assetId=number(b,"assetId");
     synchronized(PhaseTwoService.WRITE_LOCK){
       try(Connection c=open()){
         c.setAutoCommit(false);
         try{
-          Map<String,Object> pool=one(c,"SELECT p.id,p.ip_address AS ipAddress,p.is_active AS active,p.is_reserved AS reserved,p.is_occupied AS occupied,p.reservation_reason AS reservationReason,r.id AS rangeId,r.cidr,r.gateway,r.range_type AS rangeType,b.id AS branchId,b.name AS branchName,o.id AS outletId,o.name AS outletName,d.id AS assignmentId FROM ip_address_pool p JOIN ip_range r ON r.id=p.ip_range_id JOIN branch b ON b.id=r.branch_id LEFT JOIN outlet o ON o.id=r.outlet_id LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' WHERE p.id=? AND p.deleted_at IS NULL AND r.deleted_at IS NULL AND b.deleted_at IS NULL AND (o.id IS NULL OR o.deleted_at IS NULL)",poolId);
-          if(pool==null)throw problem(404,"IP_NOT_FOUND","IP 不存在或已删除。");
-          if(pool.get("assignmentId")!=null)throw problem(409,"IP_ALREADY_ASSIGNED","该 IP 已分配，不能重复补录。");
-          if(value(pool.get("ipAddress")).equals(value(pool.get("gateway"))))throw problem(400,"SYSTEM_RESERVED_PROTECTED","当前网关是系统保留地址，请先通过调整网关移走后再补录。");
-          String originalSource=sourceState(pool),source="OCCUPIED".equals(originalSource)?"AVAILABLE":originalSource;
-          if(source==null)throw problem(409,"IP_NOT_AVAILABLE","该 IP 当前状态不能补录。");
-          Map<String,Object> asset=one(c,"SELECT id,asset_type AS assetType,name,requires_user AS requiresUser,requires_resource_code AS requiresResourceCode,recommended_range_type AS recommendedRangeType FROM asset_definition WHERE id=? AND is_active=1 AND deleted_at IS NULL",assetId);
-          if(asset==null)throw problem(400,"ASSET_INVALID","请选择已启用的资产小类。");
-          String requestedType=optional(b,"assetType",16);if(requestedType!=null&&!requestedType.equals(value(asset.get("assetType"))))throw problem(400,"ASSET_TYPE_MISMATCH","资产类型与资产小类不一致，请重新选择。");
-          boolean needsUser=n(asset.get("requiresUser"))==1,needsCode=n(asset.get("requiresResourceCode"))==1;
-          String userName=optional(b,"userName",100),userAuth=optional(b,"userUnifiedAuthId",64),code=optional(b,"assetCode",100);
-          if(needsUser){if(userName==null||userAuth==null)throw problem(400,"ASSET_USER_REQUIRED","该资产要求使用人姓名和统一认证号。");}else if(userName!=null||userAuth!=null)throw problem(400,"ASSET_USER_FORBIDDEN","该资产不要求使用人信息，请勿填写。");
-          if(needsCode){if(code==null)throw problem(400,"ASSET_CODE_REQUIRED","该资产要求资源编码。");}else if(code!=null)throw problem(400,"ASSET_CODE_FORBIDDEN","该资产不要求资源编码，请勿填写。");
-          if(code!=null&&exists(c,"SELECT 1 FROM ip_assignment WHERE status='ASSIGNED' AND resource_code=?",code))throw problem(409,"RESOURCE_CODE_DUPLICATE","该资源编码已有有效分配记录。");
-          Long responsible=optionalLong(b,"responsibleTechUserId");
-          if(responsible!=null&&!exists(c,"SELECT 1 FROM sys_user WHERE id=? AND role='TECH_ADMIN' AND is_active=1 AND deleted_at IS NULL AND (branch_id IS NULL OR branch_id=?) AND (outlet_id IS NULL OR outlet_id=?)",responsible,n(pool.get("branchId")),n(pool.get("outletId"))))throw problem(400,"RESPONSIBLE_TECH_INVALID","负责科技管理员不存在、已停用或无该网点权限。");
-          String[] switches=PhaseFourService.normalizeSwitchFields(raw(b,"switchIp"),raw(b,"switchPort"));String port=switches[1],mac=PhaseFourService.normalizeMac(raw(b,"macAddress")),serial=PhaseFourService.normalizeSerialNumber(raw(b,"serialNumber"));
-          String note=optional(b,"note",500),now=Instant.now().toString();
-          long id=insert(c,"INSERT INTO ip_assignment(application_id,ip_pool_id,resource_code,assigned_by,assigned_at,status,version,switch_port,mac_address,switch_ip,serial_number,assignment_source,manual_asset_id,manual_asset_type,manual_asset_name,manual_requires_user,manual_requires_resource_code,manual_asset_code,manual_user_name,manual_user_unified_auth_id,manual_registered_by,manual_registered_at,responsible_tech_user_id,manual_note,source_pool_state,source_is_active,source_is_reserved,source_reservation_reason) VALUES(NULL,?,?,?,?, 'ASSIGNED',0,?,?,?,?, 'MANUAL_REGISTRATION',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",poolId,code,actor,now,port,mac,switches[0],serial,asset.get("id"),asset.get("assetType"),asset.get("name"),asset.get("requiresUser"),asset.get("requiresResourceCode"),code,userName,userAuth,actor,now,responsible,note,source,"OCCUPIED".equals(originalSource)?1:pool.get("active"),"OCCUPIED".equals(originalSource)?0:pool.get("reserved"),"OCCUPIED".equals(originalSource)?null:pool.get("reservationReason"));
-          if("OCCUPIED".equals(originalSource))change(c,"UPDATE ip_address_pool SET is_occupied=0,is_active=1,is_reserved=0,reservation_reason=NULL,updated_at=? WHERE id=? AND is_occupied=1 AND deleted_at IS NULL",now,poolId);
-          audit(c,actor,"MANUAL_REGISTER_IP","IP_ASSIGNMENT",String.valueOf(id),"SUCCESS",json.toJson(map("ipAddress",pool.get("ipAddress"),"cidr",pool.get("cidr"),"sourceState",originalSource,"assetType",asset.get("assetType"),"assetName",asset.get("name"),"responsibleTechUserId",responsible,"note",note)));
+          PreparedRegistration prepared=prepare(c,poolId,b,false);
+          Map<String,Object> result=write(c,prepared,actor);
           c.commit();
-          return map("id",id,"ipAddress",pool.get("ipAddress"),"assignmentSource","MANUAL_REGISTRATION","registeredAt",now,"sourceState",originalSource);
+          return result;
         }catch(Exception e){c.rollback();throw e;}
       }
     }
   }
+
+  /** Read-only validation shared by individual and batch registration. The caller owns the transaction. */
+  PreparedRegistration prepare(Connection c,long poolId,JsonObject b,boolean allowIdentical)throws Exception{
+    long assetId=number(b,"assetId");
+    Map<String,Object> pool=one(c,"SELECT p.id,p.ip_address AS ipAddress,p.is_active AS active,p.is_reserved AS reserved,p.is_occupied AS occupied,p.reservation_reason AS reservationReason,p.updated_at AS poolUpdatedAt,r.id AS rangeId,r.cidr,r.gateway,r.range_type AS rangeType,r.updated_at AS rangeUpdatedAt,b.id AS branchId,b.name AS branchName,b.updated_at AS branchUpdatedAt,o.id AS outletId,o.name AS outletName,o.updated_at AS outletUpdatedAt,d.id AS assignmentId,d.version AS assignmentVersion FROM ip_address_pool p JOIN ip_range r ON r.id=p.ip_range_id JOIN branch b ON b.id=r.branch_id LEFT JOIN outlet o ON o.id=r.outlet_id LEFT JOIN ip_assignment d ON d.ip_pool_id=p.id AND d.status='ASSIGNED' WHERE p.id=? AND p.deleted_at IS NULL AND r.deleted_at IS NULL AND b.deleted_at IS NULL AND (o.id IS NULL OR o.deleted_at IS NULL)",poolId);
+    if(pool==null)throw problem(404,"IP_NOT_FOUND","IP 不存在或已删除。");
+    if(pool.get("assignmentId")!=null&&!allowIdentical)throw problem(409,"IP_ALREADY_ASSIGNED","该 IP 已分配，不能重复补录。");
+    if(value(pool.get("ipAddress")).equals(value(pool.get("gateway"))))throw problem(400,"SYSTEM_RESERVED_PROTECTED","当前网关是系统保留地址，请先通过调整网关移走后再补录。");
+    String originalSource=sourceState(pool),source="OCCUPIED".equals(originalSource)?"AVAILABLE":originalSource;
+    if(source==null&&pool.get("assignmentId")==null)throw problem(409,"IP_NOT_AVAILABLE","该 IP 当前状态不能补录。");
+    Map<String,Object> asset=one(c,"SELECT id,asset_type AS assetType,name,requires_user AS requiresUser,requires_resource_code AS requiresResourceCode,recommended_range_type AS recommendedRangeType,updated_at AS assetUpdatedAt FROM asset_definition WHERE id=? AND is_active=1 AND deleted_at IS NULL",assetId);
+    if(asset==null)throw problem(400,"ASSET_INVALID","请选择已启用的资产小类。");
+    String requestedType=optional(b,"assetType",16);if(requestedType!=null&&!requestedType.equals(value(asset.get("assetType"))))throw problem(400,"ASSET_TYPE_MISMATCH","资产类型与资产小类不一致，请重新选择。");
+    boolean needsUser=n(asset.get("requiresUser"))==1,needsCode=n(asset.get("requiresResourceCode"))==1;
+    String userName=optional(b,"userName",100),userAuth=optional(b,"userUnifiedAuthId",64),code=optional(b,"assetCode",100);
+    if(needsUser){if(userName==null||userAuth==null)throw problem(400,"ASSET_USER_REQUIRED","该资产要求使用人姓名和统一认证号。");}else if(userName!=null||userAuth!=null)throw problem(400,"ASSET_USER_FORBIDDEN","该资产不要求使用人信息，请勿填写。");
+    if(needsCode){if(code==null)throw problem(400,"ASSET_CODE_REQUIRED","该资产要求资源编码。");}else if(code!=null)throw problem(400,"ASSET_CODE_FORBIDDEN","该资产不要求资源编码，请勿填写。");
+    Long responsible=optionalLong(b,"responsibleTechUserId");
+    Map<String,Object> tech=null;
+    if(responsible!=null){
+      tech=one(c,"SELECT id,username,real_name,branch_id,outlet_id,version,updated_at FROM sys_user WHERE id=? AND role='TECH_ADMIN' AND is_active=1 AND deleted_at IS NULL AND (branch_id IS NULL OR branch_id=?) AND (outlet_id IS NULL OR outlet_id=?)",responsible,n(pool.get("branchId")),n(pool.get("outletId")));
+      if(tech==null)throw problem(400,"RESPONSIBLE_TECH_INVALID","负责科技管理员不存在、已停用或无该网点权限。");
+    }
+    String[] switches=PhaseFourService.normalizeSwitchFields(raw(b,"switchIp"),raw(b,"switchPort"));
+    Map<String,Object> normalized=map("assetId",assetId,"assetType",asset.get("assetType"),"assetName",asset.get("name"),"requiresUser",asset.get("requiresUser"),"requiresResourceCode",asset.get("requiresResourceCode"),"assetCode",code,"userName",userName,"userUnifiedAuthId",userAuth,"responsibleTechUserId",responsible,"switchIp",switches[0],"switchPort",switches[1],"macAddress",PhaseFourService.normalizeMac(raw(b,"macAddress")),"serialNumber",PhaseFourService.normalizeSerialNumber(raw(b,"serialNumber")),"note",optional(b,"note",500));
+    Map<String,Object> existing=null;
+    if(pool.get("assignmentId")!=null){
+      existing=one(c,"SELECT id,assignment_source AS source,manual_asset_id AS assetId,manual_asset_type AS assetType,manual_asset_name AS assetName,manual_requires_user AS requiresUser,manual_requires_resource_code AS requiresResourceCode,resource_code AS assetCode,manual_asset_code AS manualAssetCode,manual_user_name AS userName,manual_user_unified_auth_id AS userUnifiedAuthId,responsible_tech_user_id AS responsibleTechUserId,switch_ip AS switchIp,switch_port AS switchPort,mac_address AS macAddress,serial_number AS serialNumber,manual_note AS note,version FROM ip_assignment WHERE id=? AND status='ASSIGNED'",pool.get("assignmentId"));
+      boolean same=existing!=null&&"MANUAL_REGISTRATION".equals(existing.get("source"));
+      for(String key:normalized.keySet())if(!sameValue(normalized.get(key),existing==null?null:existing.get(key)))same=false;
+      if(existing!=null&&!sameValue(code,existing.get("manualAssetCode")))same=false;
+      if(!same)throw problem(409,"IP_ASSIGNMENT_CONFLICT","该 IP 已有不同的有效分配，不能覆盖。");
+    }
+    if(code!=null){
+      Map<String,Object> occupiedCode=one(c,"SELECT id FROM ip_assignment WHERE status='ASSIGNED' AND resource_code=?",code);
+      if(occupiedCode!=null&&(existing==null||!sameValue(occupiedCode.get("id"),existing.get("id"))))throw problem(409,"RESOURCE_CODE_DUPLICATE","该资源编码已有有效分配记录。");
+    }
+    return new PreparedRegistration(pool,asset,normalized,tech,existing,originalSource,source);
+  }
+
+  /** Writes an already validated registration without opening or committing a connection. */
+  Map<String,Object> write(Connection c,PreparedRegistration prepared,long actor)throws Exception{
+    if(prepared.duplicate)throw problem(409,"IP_ALREADY_ASSIGNED","该 IP 已分配，不能重复补录。");
+    Map<String,Object> pool=prepared.pool,asset=prepared.asset,v=prepared.normalized;
+    String originalSource=prepared.originalSource,now=Instant.now().toString();
+    long id=insert(c,"INSERT INTO ip_assignment(application_id,ip_pool_id,resource_code,assigned_by,assigned_at,status,version,switch_port,mac_address,switch_ip,serial_number,assignment_source,manual_asset_id,manual_asset_type,manual_asset_name,manual_requires_user,manual_requires_resource_code,manual_asset_code,manual_user_name,manual_user_unified_auth_id,manual_registered_by,manual_registered_at,responsible_tech_user_id,manual_note,source_pool_state,source_is_active,source_is_reserved,source_reservation_reason) VALUES(NULL,?,?,?,?, 'ASSIGNED',0,?,?,?,?, 'MANUAL_REGISTRATION',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",pool.get("id"),v.get("assetCode"),actor,now,v.get("switchPort"),v.get("macAddress"),v.get("switchIp"),v.get("serialNumber"),asset.get("id"),asset.get("assetType"),asset.get("name"),asset.get("requiresUser"),asset.get("requiresResourceCode"),v.get("assetCode"),v.get("userName"),v.get("userUnifiedAuthId"),actor,now,v.get("responsibleTechUserId"),v.get("note"),prepared.source,"OCCUPIED".equals(originalSource)?1:pool.get("active"),"OCCUPIED".equals(originalSource)?0:pool.get("reserved"),"OCCUPIED".equals(originalSource)?null:pool.get("reservationReason"));
+    if("OCCUPIED".equals(originalSource))change(c,"UPDATE ip_address_pool SET is_occupied=0,is_active=1,is_reserved=0,reservation_reason=NULL,updated_at=? WHERE id=? AND is_occupied=1 AND deleted_at IS NULL",now,pool.get("id"));
+    audit(c,actor,"MANUAL_REGISTER_IP","IP_ASSIGNMENT",String.valueOf(id),"SUCCESS",json.toJson(map("ipAddress",pool.get("ipAddress"),"cidr",pool.get("cidr"),"sourceState",originalSource,"assetType",asset.get("assetType"),"assetName",asset.get("name"),"responsibleTechUserId",v.get("responsibleTechUserId"),"note",v.get("note"))));
+    return map("id",id,"ipAddress",pool.get("ipAddress"),"assignmentSource","MANUAL_REGISTRATION","registeredAt",now,"sourceState",originalSource);
+  }
+
+  static final class PreparedRegistration{
+    final Map<String,Object> pool,asset,normalized,snapshot;
+    final boolean duplicate;
+    final String originalSource,source;
+    PreparedRegistration(Map<String,Object> p,Map<String,Object> a,Map<String,Object> v,Map<String,Object> tech,Map<String,Object> existing,String original,String s){
+      pool=p;asset=a;normalized=v;duplicate=existing!=null;originalSource=original;source=s;
+      snapshot=map("pool",p,"asset",a,"normalized",v,"responsible",tech,"existing",existing,"sourceState",original);
+    }
+  }
+  private static boolean sameValue(Object a,Object b){return a instanceof Number&&b instanceof Number?((Number)a).longValue()==((Number)b).longValue():Objects.equals(a,b);}
 
   Map<String,Object> gatewayOptions(long rangeId)throws Exception{
     try(Connection c=open()){

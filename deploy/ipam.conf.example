@@ -1,0 +1,7 @@
+# Copy to ipam.conf in the installation root. Do not add quotes or spaces around =.
+# Environment variables override this file. No passwords belong here.
+IPAM_BIND=0.0.0.0
+IPAM_PORT=18080
+# Optional absolute paths. Defaults: current installation root and its data folder.
+# IPAM_INSTALL_DIR=/data/项目/IP管理系统
+# IPAM_DATA_DIR=/data/项目/IP管理系统/data

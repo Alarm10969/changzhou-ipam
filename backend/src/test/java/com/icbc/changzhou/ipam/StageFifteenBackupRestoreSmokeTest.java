@@ -31,7 +31,7 @@ public final class StageFifteenBackupRestoreSmokeTest {
       Files.writeString(metadata,JSON.toJson(map("lastBackupAt",Instant.now().minusSeconds(8*86400).toString(),"lastBackupBy","other15")));
       check(Boolean.TRUE.equals(service.status().get("reminderDue")),"seven day reminder");
       Map<String,Object> preview=preview(service,archive,2);
-      check(((Number)preview.get("sourceSchema")).intValue()==22,"current backup schema");
+      check(((Number)preview.get("sourceSchema")).intValue()==24,"current backup schema");
       Map<?,?> counts=(Map<?,?>)preview.get("counts");
       check(((Number)counts.get("sys_user")).longValue()==3,"accounts omitted from backup");
       check(((Number)counts.get("ip_assignment")).longValue()==2,"assignments omitted from backup");
@@ -89,7 +89,7 @@ public final class StageFifteenBackupRestoreSmokeTest {
     Path paths=work.resolve("traversal.zip");
     try(ZipOutputStream out=new ZipOutputStream(Files.newOutputStream(paths))){out.putNextEntry(new ZipEntry("../escaped.db"));out.write(new byte[]{1,2,3});out.closeEntry();}
     expectProblem(() -> preview(service,paths,2),"BACKUP_ARCHIVE_INVALID");check(!Files.exists(work.resolve("escaped.db")),"ZIP escaped upload directory");
-    Path future=work.resolve("future.db");copySnapshot(db,future);change(future,"INSERT INTO schema_history(version,description,checksum) VALUES('023','future','invalid')");
+    Path future=work.resolve("future.db");copySnapshot(db,future);change(future,"INSERT INTO schema_history(version,description,checksum) VALUES('025','future','invalid')");
     expectProblem(() -> preview(service,future,2),"BACKUP_VERSION_UNSUPPORTED");
     Path altered=work.resolve("altered.db");copySnapshot(db,altered);change(altered,"DROP TRIGGER trg_initial_admin_no_delete");
     expectProblem(() -> preview(service,altered,2),"BACKUP_SCHEMA_INVALID");
@@ -128,7 +128,7 @@ public final class StageFifteenBackupRestoreSmokeTest {
   private static void assertLegacyUpgrade(BackupService service,Path work)throws Exception {
     Path legacy=work.resolve("legacy-v021.db");migrateLegacy(legacy);seedLegacy(legacy);
     String digest=sha(legacy);Map<String,Object> p=preview(service,legacy,2);
-    check(((Number)p.get("sourceSchema")).intValue()==21&&((Number)p.get("targetSchema")).intValue()==22,"V021 restore preview did not upgrade isolated copy");
+    check(((Number)p.get("sourceSchema")).intValue()==21&&((Number)p.get("targetSchema")).intValue()==24,"V021 restore preview did not upgrade isolated copy");
     check(digest.equals(sha(legacy)),"legacy backup source was modified");
     check(count(legacy,"SELECT count(*) FROM schema_history WHERE version='022'")==0,"legacy source migrated in place");
     service.cancel(String.valueOf(p.get("uploadId")),2);

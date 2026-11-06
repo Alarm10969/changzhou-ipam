@@ -2,6 +2,7 @@
 # 仅用于遗忘唯一管理员密码的恢复；先正常停止服务，不删除 SQLite 数据库。
 set -eu
 BASE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$BASE_DIR/deploy/load-config.sh"
 APP_JAR=${IPAM_JAR:-"$BASE_DIR/ipam-stage3.jar"}
 LIB_DIR=${IPAM_LIB_DIR:-"$BASE_DIR/lib"}
 DATA_DIR=${IPAM_DATA_DIR:-"$BASE_DIR/data"}

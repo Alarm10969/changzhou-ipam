@@ -2,6 +2,7 @@
 # 在已解压的发布根目录中运行；不需要 root，也不覆盖业务数据库。
 set -eu
 BASE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$BASE_DIR/deploy/load-config.sh"
 TARGET_DIR=${IPAM_INSTALL_DIR:-/data/项目/IP管理系统}
 DATA_DIR=${IPAM_DATA_DIR:-"$TARGET_DIR/data"}
 

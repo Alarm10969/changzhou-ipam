@@ -36,4 +36,20 @@ if ($LASTEXITCODE -ne 0) { throw 'Diff whitespace check failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'V025 resource maintenance smoke test failed.' }
 & java -cp $cp com.icbc.changzhou.ipam.StageFifteenBackupRestoreSmokeTest
 if ($LASTEXITCODE -ne 0) { throw 'V025 backup and restore smoke test failed.' }
-Write-Output 'PASS|STAGE4_FULL_REGRESSION|stages-1-to-15|resource-maintenance|backup-restore|browser-phase4|browser-v025|node-check|diff-check'
+& java -cp $cp com.icbc.changzhou.ipam.StageSixteenAssignmentImportSmokeTest
+if ($LASTEXITCODE -ne 0) { throw 'Assignment import smoke test failed.' }
+& node (Join-Path $root 'scripts\browser-assignment-import-regression.js')
+if ($LASTEXITCODE -ne 0) { throw 'Assignment import browser regression failed.' }
+& java -cp $cp com.icbc.changzhou.ipam.StageSeventeenPoolAssetFilterSmokeTest
+if ($LASTEXITCODE -ne 0) { throw 'Pool asset filter smoke test failed.' }
+& node (Join-Path $root 'scripts\browser-pool-asset-filter-regression.js')
+if ($LASTEXITCODE -ne 0) { throw 'Pool asset filter browser regression failed.' }
+& node (Join-Path $root 'scripts\test-ip-calculator.js')
+if ($LASTEXITCODE -ne 0) { throw 'IP calculator arithmetic regression failed.' }
+& node (Join-Path $root 'scripts\browser-ip-calculator-regression.js')
+if ($LASTEXITCODE -ne 0) { throw 'IP calculator browser regression failed.' }
+& java -cp $cp com.icbc.changzhou.ipam.StageEighteenBranchSetupSmokeTest
+if ($LASTEXITCODE -ne 0) { throw 'Branch setup smoke test failed.' }
+& node --check (Join-Path $root 'frontend\setup-guide.js')
+if ($LASTEXITCODE -ne 0) { throw 'Setup guide syntax check failed.' }
+Write-Output 'PASS|STAGE4_FULL_REGRESSION|stages-1-to-18|resource-maintenance|backup-restore|assignment-import|browser-phase4|browser-v025|node-check|diff-check'

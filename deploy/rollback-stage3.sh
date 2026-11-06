@@ -2,6 +2,7 @@
 # 用法：sh ./deploy/rollback-stage3.sh /绝对路径/升级前备份.db [旧版本ZIP]
 set -eu
 BASE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$BASE_DIR/deploy/load-config.sh"
 DATA_DIR=${IPAM_DATA_DIR:-"$BASE_DIR/data"}
 BACKUP=${1:?请提供升级前备份的绝对路径}
 OLD_ZIP=${2:-}

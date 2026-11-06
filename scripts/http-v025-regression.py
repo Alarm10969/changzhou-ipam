@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run V025 HTTP checks against a short-lived server and isolated test database."""
 import argparse
+import csv
 import http.cookiejar
 import io
 import json
@@ -75,6 +76,21 @@ class Client:
         self.csrf = response.data["csrfToken"]
         return response.data
 
+    def upload(self, path, filename, contents, csrf=True):
+        boundary = "ipam-test-" + secrets.token_hex(12)
+        payload = ("--" + boundary + '\r\nContent-Disposition: form-data; name="file"; filename="' + filename +
+                   '"\r\nContent-Type: application/octet-stream\r\n\r\n').encode("utf-8")
+        payload += contents + ("\r\n--" + boundary + "--\r\n").encode("ascii")
+        headers = {"Content-Type": "multipart/form-data; boundary=" + boundary, "Origin": self.base}
+        if csrf and self.csrf:
+            headers["X-CSRF-Token"] = self.csrf
+        request = urllib.request.Request(self.base + "/api/v1/" + path, data=payload, headers=headers, method="POST")
+        try:
+            with self.opener.open(request, timeout=30) as response:
+                return Response(response.status, response.headers, response.read())
+        except urllib.error.HTTPError as error:
+            return Response(error.code, error.headers, error.read())
+
     def change_password(self, current, new):
         response = self.expect("POST", "auth/change-password", data={"currentPassword": current, "newPassword": new})
         self.csrf = response.data["csrfToken"]
@@ -123,7 +139,7 @@ def download(client):
     with zipfile.ZipFile(io.BytesIO(response.body)) as archive:
         check(set(archive.namelist()) == {"manifest.json", "ipam.db"}, "backup ZIP contents")
         manifest = json.loads(archive.read("manifest.json"))
-        check(manifest["schemaVersion"] == 22, "downloaded backup schema")
+        check(manifest["schemaVersion"] == 24, "downloaded backup schema")
     return response.body
 
 
@@ -148,6 +164,131 @@ def await_restore(public, job_id):
 
 def restored_names(client, branch_id):
     return [row["name"] for row in client.expect("GET", "admin/branches").data["items"] if row["id"] == branch_id]
+
+
+def exercise_assignment_imports(primary, secondary, tech, public, outlet_id, manual_ip):
+    endpoint = "admin/assignment-imports"
+    for client, status in ((public, 401), (tech, 403)):
+        client.expect("GET", endpoint + "/recent", status=status)
+        client.expect("GET", endpoint + "/template.xlsx", status=status)
+        check(client.upload(endpoint, "test.csv", b"invalid").status == status, "assignment upload permission")
+    check(primary.upload(endpoint, "test.csv", b"invalid", csrf=False).status == 403, "assignment upload CSRF")
+    for ext, mime in (("csv", "text/csv"), ("xlsx", "spreadsheetml")):
+        template = primary.expect("GET", endpoint + "/template." + ext)
+        check(mime in template.headers.get("Content-Type", ""), "assignment template type")
+    asset_name = "HTTP批量补录资产"
+    asset_id = primary.expect("POST", "admin/assets", status=201,
+        data={"assetType": "TECH", "name": asset_name, "requiresUser": 0, "requiresResourceCode": 0,
+              "recommendedRangeType": "OFFICE", "active": 1}).data["id"]
+    headers = ["IP地址", "资产类型", "资产名称", "支行名称（核对用）", "网点名称（核对用）", "资源编码",
+               "使用人姓名", "统一认证号", "负责科技管理员账号", "交换机IP", "交换机端口", "MAC地址", "设备序列号", "补录说明"]
+    def content(rows):
+        stream = io.StringIO(newline="")
+        writer = csv.writer(stream)
+        writer.writerow(headers)
+        for ip, note in rows:
+            writer.writerow([ip, "科技资产", asset_name, "", "", "", "", "", "", "", "", "", "", note])
+        return stream.getvalue().encode("utf-8")
+    def preview(rows):
+        response = primary.upload(endpoint, "存量设备台账.csv", content(rows))
+        check(response.status == 201, "assignment upload did not return preview")
+        check(response.data["fileName"] == "存量设备台账.csv", "UTF-8 upload filename was corrupted")
+        return response.data
+    def confirm(job, expected=200, partial=True):
+        return primary.expect("POST", endpoint + f"/{job['id']}/confirm", status=expected,
+            data={"previewVersion": job["previewVersion"], "acceptPartial": partial}).data
+    available = pool(primary, outlet_id, "AVAILABLE")
+    check(len(available) >= 5, "assignment import fixture too small")
+    gateway = [row for row in pool(primary, outlet_id) if row["state"] == "SYSTEM_RESERVED"][0]["ipAddress"]
+    first = available[0]
+    mixed = [(first["ipAddress"], "HTTP混合导入"), (manual_ip, "已分配冲突"),
+             (gateway, "网关不可补录"), ("108.63.255.1", "未入池")]
+    job = preview(mixed)
+    check(job["readyRows"] == 1 and job["errorRows"] == 3, "mixed assignment preview counts")
+    check(find_row(pool(primary, outlet_id), first["id"])["state"] == "AVAILABLE", "preview wrote assignment")
+    for suffix, method, kwargs in (("", "GET", {}), ("/not-imported.csv", "GET", {}),
+                                   ("/confirm", "POST", {"data": {"previewVersion": job["previewVersion"], "acceptPartial": True}}),
+                                   ("", "DELETE", {})):
+        response = secondary.request(method, endpoint + f"/{job['id']}" + suffix, **kwargs)
+        check(response.status in (403, 404), "another administrator accessed import task")
+    confirm(job, expected=400, partial=False)
+    primary.expect("POST", endpoint + f"/{job['id']}/confirm", status=403, csrf=False,
+        data={"previewVersion": job["previewVersion"], "acceptPartial": True})
+    result = confirm(job)
+    check(result["status"] == "COMPLETED" and result["importedRows"] == 1 and result["notImportedRows"] == 3,
+          "partial assignment confirmation counts")
+    check(find_row(pool(primary, outlet_id), first["id"])["state"] == "ASSIGNED", "passing import row not allocated")
+    check(confirm(job)["importedRows"] == 1, "completed task retry changed result")
+    report = primary.expect("GET", endpoint + f"/{job['id']}/not-imported.csv")
+    check("text/csv" in report.headers.get("Content-Type", "") and "attachment" in report.headers.get("Content-Disposition", ""),
+          "not-imported download headers")
+    check(len(list(csv.reader(io.StringIO(report.body.decode("utf-8-sig"))))) == 4, "not-imported report rows")
+    repeated = preview(mixed)
+    check(repeated["readyRows"] == 0 and repeated["duplicateRows"] == 1 and repeated["errorRows"] == 3,
+          "repeated file did not skip matching allocation")
+    confirm(repeated, expected=409)
+    primary.expect("DELETE", endpoint + f"/{repeated['id']}", status=204)
+    canceled = primary.expect("GET", endpoint + f"/{repeated['id']}").data
+    check(canceled["status"] == "CANCELLED", "cancel did not persist")
+    confirm(repeated, expected=409)
+    change_a, change_b = available[1:3]
+    stale = preview([(change_a["ipAddress"], ""), (change_b["ipAddress"], "")])
+    secondary.expect("POST", f"admin/ip-pool/{change_a['id']}/manual-assignment", status=201, data={"assetId": asset_id})
+    refreshed = confirm(stale)
+    check(refreshed.get("requiresReview") and refreshed["previewVersion"] > stale["previewVersion"], "stale preview was not refreshed")
+    check(find_row(pool(primary, outlet_id), change_b["id"])["state"] == "AVAILABLE", "stale confirmation imported another row")
+    check(confirm(stale).get("requiresReview"), "old version permitted stale confirmation")
+    current = confirm(refreshed)
+    check(current["status"] == "COMPLETED" and current["importedRows"] == 1, "reviewed preview did not import remaining row")
+    pending = preview([(available[3]["ipAddress"], "restore must expire this preview")])
+    check(pending["readyRows"] == 1, "pending restore preview missing")
+    check(any(row["id"] == job["id"] for row in primary.expect("GET", endpoint + "/recent").data["items"]), "recent import missing")
+    print("PASS|HTTP_V026|multipart,templates,permissions,csrf,ownership,partial,duplicates,csv-report,cancel,retry,stale-reconfirm")
+    return pending, job
+
+
+def exercise_pool_asset_filters(primary, tech, public, branch_id, outlet_id, asset_id):
+    endpoint = "admin/ip-pool-v2?"
+    def filtered(**fields):
+        return primary.expect("GET", endpoint + urllib.parse.urlencode(fields)).data
+    public.expect("GET", endpoint + "assetType=TECH", status=401)
+    tech.expect("GET", endpoint + "assetType=TECH", status=403)
+    public.expect("GET", "admin/ip-pool-asset-options", status=401)
+    tech.expect("GET", "admin/ip-pool-asset-options", status=403)
+    for query in ("assetType=UNKNOWN", "assetId=0", "assetId=-1", "assetId=text"):
+        primary.expect("GET", endpoint + query, status=400)
+    current = filtered(branchId=branch_id, outletId=outlet_id, rangeType="OFFICE", state="ASSIGNED",
+                       assetType="TECH", assetId=asset_id)
+    check(current["total"] == 2 and len(current["items"]) == 2, "HTTP asset ID did not select approval and manual rows")
+    check({row["assignmentSource"] for row in current["items"]} == {"APPLICATION", "MANUAL_REGISTRATION"},
+          "HTTP type filter missed an allocation source")
+    check(filtered(assetId=asset_id)["total"] == 2, "HTTP minor category must work without a major category")
+    check(filtered(assetType="NON_TECH", assetId=asset_id)["total"] == 0, "HTTP category mismatch was ignored")
+    check(filtered(assetType="TECH", state="AVAILABLE")["total"] == 0, "HTTP unassigned pool acquired an asset category")
+    all_tech = filtered(assetType="TECH", outletId=outlet_id)
+    check(all_tech["total"] >= 5, "HTTP type filter missed batch-imported allocations")
+    exact = filtered(assetId=asset_id, q=current["items"][0]["ipAddress"])
+    check(exact["total"] == 1, "HTTP asset and exact-IP filters did not compose")
+    check(filtered(assetId=asset_id, page=2)["total"] == 2 and not filtered(assetId=asset_id, page=2)["items"],
+          "HTTP page count ignored the asset filter")
+    same_name = primary.expect("POST", "admin/assets", status=201,
+        data={"assetType": "NON_TECH", "name": "HTTP资源编码资产", "requiresUser": 0, "requiresResourceCode": 0,
+              "recommendedRangeType": "OFFICE", "active": 1}).data["id"]
+    selected = pool(primary, outlet_id, "AVAILABLE")[-1]
+    allocated = primary.expect("POST", f"admin/ip-pool/{selected['id']}/manual-assignment", status=201,
+                               data={"assetId": same_name}).data
+    primary.expect("PUT", f"admin/assets/{same_name}", status=204,
+        data={"assetType": "NON_TECH", "name": "HTTP资源编码资产", "requiresUser": 0, "requiresResourceCode": 0,
+              "recommendedRangeType": "OFFICE", "active": 0})
+    check(filtered(assetId=same_name)["total"] == 1 and filtered(assetId=asset_id)["total"] == 2,
+          "HTTP same-name or disabled assets were conflated")
+    choices = primary.expect("GET", "admin/ip-pool-asset-options").data["items"]
+    check(any(row["id"] == same_name and row["active"] == 0 for row in choices), "disabled filter option missing")
+    primary.expect("POST", f"admin/assignments/{allocated['id']}/release", status=200,
+                   data={"reason": "资产筛选释放核对"})
+    check(filtered(assetId=same_name)["total"] == 0, "released asset remained in HTTP filter results")
+    check(filtered(q=selected["ipAddress"])["total"] == 1, "release made the unfiltered IP disappear")
+    print("PASS|HTTP_V027|major,minor,combined,sources,batch,same-name,inactive,release,pagination,validation,permissions")
 
 
 def exercise(base, bootstrap_password):
@@ -229,7 +370,18 @@ def exercise(base, bootstrap_password):
     assert_private_fields_absent(tech.expect("GET", "my-assignments").data)
     check(all("detailJson" not in row for row in audits), "raw audit detail exposed")
     tech.expect("GET", "admin/audit", status=403)
+    public.expect("GET", "admin/setup", status=401)
+    tech.expect("GET", "admin/setup", status=403)
+    tech.expect("POST", "admin/setup/complete", status=403, data={})
+    primary.expect("POST", "admin/setup/complete", status=403, data={}, csrf=False)
+    setup_status = primary.expect("GET", "admin/setup").data
+    check(setup_status["plannedOutletCount"] >= 1, "setup did not see live planned outlet")
+    primary.expect("POST", "admin/setup/complete", status=400, data={})
+    print("PASS|HTTP_V029|setup-auth,csrf,live-status,unreviewed-rules-blocked")
     print("PASS|HTTP_V025|permissions,csrf,batch-occupied,manual,approval,central-edit,privacy,audit")
+
+    pending_import, completed_import = exercise_assignment_imports(primary, secondary, tech, public, outlet_id, manual_pool["ipAddress"])
+    exercise_pool_asset_filters(primary, tech, public, branch_id, outlet_id, asset_id)
 
     initial_archive = download(primary)
     initial_preview = upload_preview(primary, initial_archive)
@@ -247,7 +399,7 @@ def exercise(base, bootstrap_password):
             data={"code": "HTTPB25", "name": "HTTP备份后修改", "active": True})
         check(restored_names(restoring_admin, branch_id) == ["HTTP备份后修改"], "pre-restore mutation")
         preview = upload_preview(restoring_admin, archive)
-        check(preview["sourceSchema"] == 22 and preview["requiresRelogin"], "HTTP preview result")
+        check(preview["sourceSchema"] == 24 and preview["requiresRelogin"], "HTTP preview result")
         confirm = restoring_admin.expect("POST", "admin/backups/restore-confirm", status=202,
             data={"uploadId": preview["uploadId"]}).data
         await_restore(public, confirm["jobId"])
@@ -267,6 +419,12 @@ def exercise(base, bootstrap_password):
               "restore rewound global recent manual-backup tracking")
         check(not current_status["reminderDue"], "restore lost recent backup reminder state")
         assert_private_fields_absent(tech.expect("GET", "my-assignments").data)
+        expired = primary.expect("GET", f"admin/assignment-imports/{pending_import['id']}").data
+        check(expired["status"] == "EXPIRED", "restore revived pending assignment import")
+        primary.expect("POST", f"admin/assignment-imports/{pending_import['id']}/confirm", status=409,
+            data={"previewVersion": pending_import["previewVersion"], "acceptPartial": True})
+        check(primary.expect("GET", f"admin/assignment-imports/{completed_import['id']}").data["status"] == "COMPLETED",
+              "restore lost completed assignment import history")
     print("PASS|HTTP_V025|both-admin-backup-preview-restore,public-job-status,old-sessions-revoked,relogin,data-rollback,global-reminder")
 
 

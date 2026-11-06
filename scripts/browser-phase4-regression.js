@@ -23,6 +23,7 @@ function responseFor(url, method, body) {
   if (name === 'admin/users') return { items: [{ id: 7, username: 'reuseuser', realName: '重建管理员', role: 'ADMIN', active: 1, initialAdmin: 0, deletedAt: null, mustChangePassword: 0, createdAt: '2026-09-20T00:00:00Z', creator: 'admin' }, { id: 6, username: 'reuseuser', realName: '原科技管理员', role: 'TECH_ADMIN', active: 0, initialAdmin: 0, deletedAt: '2026-09-19T00:00:00Z', mustChangePassword: 0, createdAt: '2026-09-19T00:00:00Z', creator: 'admin' }] };
   if (name === 'admin/audit') return { items: [{ id: 10, action: 'UPDATE_MAC', targetType: 'IP_ASSIGNMENT', targetId: '77', result: 'SUCCESS', createdAt: '2026-09-16T00:00:00Z', actor: 'admin', macAddressBefore: 'AA:BB:CC:DD:EE:00', macAddressAfter: '11:22:33:44:55:66' }, { id: 9, action: 'UPDATE_SWITCH_PORT', targetType: 'IP_ASSIGNMENT', targetId: '77', result: 'SUCCESS', createdAt: '2026-09-16T00:00:00Z', actor: 'admin', switchPortBefore: 'GE0/0/1', switchPortAfter: 'Eth-Trunk1', detailJson: '{"password":"SHOULD_NOT_RENDER"}' }] };
   if (name === 'admin/outlets' || name === 'outlets' || name === 'branches') return { items: [{ id: 1, branchId: 1, branchName: '回归支行', outletName: '回归网点', name: '回归网点', code: 'O4', active: 1, rangeId: 1 }] };
+  if (name.indexOf('admin/ip-ranges?') === 0) return {items:[],page:1,pageSize:20,total:0};
   if (name === 'admin/ip-ranges') return { items: [] };
   if (name === 'admin/outlet-plans/preview') {
     const production = JSON.parse(body).productionCidr;
@@ -33,6 +34,7 @@ function responseFor(url, method, body) {
   if (name === 'asset-categories') return { items: [] };
   if (name.indexOf('admin/applications?') === 0) return { items: [{ id: 42, status: 'PENDING', createdAt: '2026-09-16T00:00:00Z', applicantUsername: 'tech', applicantName: '科技管理员', branchName: '回归支行', outletName: '回归网点', assetType: 'NON_TECH', assetName: '端口回归资产', requiresUser: 0, requiresResourceCode: 0, recommendedRangeType: 'OFFICE' }] };
   if (name.indexOf('admin/applications/42/candidates') === 0) return { items: [{ id: 77, ipAddress: '108.56.0.10', cidr: '108.56.0.0/24', rangeType: 'OFFICE' }], total: 1, page: 1, pageSize: 50, rangeType: 'OFFICE', recommendedRangeType: 'OFFICE' };
+  if (name === 'admin/ip-pool-asset-options') return { items: [] };
   if (name.indexOf('admin/ip-pool-v2?') === 0) return { items: [
     { id: 10, ipAddress: '108.56.0.10', state: 'ASSIGNED', editable: 0, assignmentId: 77, assignmentVersion: 3, switchPort: 'GE0/0/1', macAddress: 'AA:BB:CC:DD:EE:FF', assignmentSource: 'APPLICATION', allocationSummary: '端口回归资产', branchName: '回归支行', outletName: '回归网点', rangeId: 1, rangeType: 'OFFICE', cidr: '108.56.0.0/24', gateway: '108.56.0.1', dnsPrimary: '114.114.114.114', applicantUsername: 'tech', reviewer: 'admin' },
     { id: 11, ipAddress: '108.56.0.11', state: 'AVAILABLE', editable: 1, assignmentId: null, assignmentVersion: null, allocationSummary: '—', branchName: '回归支行', outletName: '回归网点', rangeId: 1, rangeType: 'OFFICE', cidr: '108.56.0.0/24', gateway: '108.56.0.1', dnsPrimary: '114.114.114.114' },
@@ -83,7 +85,7 @@ async function main() {
   await until(() => evaluate("!!document.querySelector('#go')"), 'login form missing');
   await evaluate("document.querySelector('#username').value='admin';document.querySelector('#password').value='test';document.querySelector('#go').click();true");
   await until(() => evaluate("!!document.querySelector('[data-v=applications]')"), 'admin navigation missing');
-  const displayedVersion = await evaluate("document.querySelector('.brand em').textContent"); if (displayedVersion !== '3.9.0 · V025') fail('page header version is not V025');
+  const displayedVersion = await evaluate("document.querySelector('.brand em').textContent"); if (displayedVersion !== fs.readFileSync(path.join(root,'VERSION.txt'),'utf8').split('-').slice(0,2).join(' · ').toUpperCase()) fail('page header differs from VERSION.txt');
   await evaluate("document.querySelector('[data-v=applications]').click();true");
   await until(() => evaluate("!!document.querySelector('[data-approve]')"), 'pending application missing');
   await evaluate("document.querySelector('[data-approve]').click();true");
@@ -143,6 +145,8 @@ async function main() {
   await evaluate("var dt=new DataTransfer();dt.items.add(new File(['branch_code,outlet_code,production_cidr'], 'test.csv', {type:'text/csv'}));document.querySelector('#planImportFile').files=dt.files;document.querySelector('#planImportPreview').click();true");
   await until(() => evaluate("document.querySelector('#planImportResult').textContent.indexOf('导入第 3 行')>=0"), 'batch overlap detail not visible');
   const batchGuard = await evaluate("!document.querySelector('#planImportConfirm') && document.querySelector('#batchNotice').textContent.indexOf('整批不会写入')>=0"); if (!batchGuard) fail('batch overlap did not block confirmation');
+  await evaluate("document.querySelector('#planImportFile').dispatchEvent(new Event('change'));true");
+  if (await evaluate("document.querySelector('#planImportResult').textContent.length>0")) fail('Changing the import file retained its previous preview');
   await evaluate("document.querySelector('[data-v=users]').click();true");
   await until(() => evaluate("document.querySelector('#table') && document.querySelectorAll('#table [data-delete]').length===1"), 'account list did not distinguish current and deleted same-name accounts');
   await evaluate("document.querySelector('#table [data-delete=\\\"7\\\"]').click();true");
@@ -160,7 +164,7 @@ async function main() {
   await evaluate("document.querySelector('[data-v=notifications]').click();true"); await until(() => evaluate("document.querySelector('#table') && document.querySelector('#table').textContent.indexOf('管理员已处理')>=0"), 'tech notification page missing');
   if (await evaluate("document.body.textContent.indexOf('交换机端口')<0") === false) fail('tech notification page leaked switch port');
   const leakedRequest = await evaluate("window.__phase4Requests.some(function(x){return JSON.stringify(x.body||{}).indexOf('switchPort')>=0 && x.path.indexOf('admin/')<0;})"); if (leakedRequest) fail('tech request carried switchPort field');
-  console.log('PASS|BROWSER_PHASE4|v025-header|password-hints|approval-port-mac|pool-information-port-mac-feedback|manual-assignment-mac|gateway-adjustment|gateway-stale-refresh|audit-summary|range-conflict-suggestion|account-reuse-confirmation|narrow-screen|tech-port-mac-isolation');
+  console.log('PASS|BROWSER_PHASE4|current-header|password-hints|approval-port-mac|pool-information-port-mac-feedback|manual-assignment-mac|gateway-adjustment|gateway-stale-refresh|audit-summary|range-conflict-suggestion|account-reuse-confirmation|narrow-screen|tech-port-mac-isolation');
   ws.close();
 }
 main().catch(error => { console.error(error.stack || error); process.exitCode = 1; }).finally(() => { if (browser) browser.kill(); if (server) server.close(); });

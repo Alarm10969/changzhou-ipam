@@ -1,3 +1,3 @@
-3.9.0-v025-resource-maintenance
+3.15.0-v031-directory-lines
 Build target: Kylin ARM64 / Java 11
-Data schema: V001-V022 (V022 adds occupied IP state, separate switch IP and optional administrator-only serial-number snapshots; published migrations are unchanged)
+Data schema: V001-V024 (V024 adds outlet directory dual lines and import previews)

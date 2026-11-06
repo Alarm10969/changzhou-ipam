@@ -2,6 +2,7 @@
 # 仅停止由 start-stage1.sh 记录的本应用进程；备份/恢复前使用。
 set -eu
 BASE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$BASE_DIR/deploy/load-config.sh"
 DATA_DIR=${IPAM_DATA_DIR:-"$BASE_DIR/data"}
 PID_FILE="$DATA_DIR/ipam-stage1.pid"
 [ -r "$PID_FILE" ] || { echo '未找到 PID 文件，应用可能未由本脚本启动。' >&2; exit 1; }

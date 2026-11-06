@@ -41,6 +41,7 @@ function api(name, method, body, res) {
   if (name === 'admin/outlets' || name === 'outlets') return reply(res, 200, { items: [{ id: 1, name: '中吴支行营业室', code: 'O1', branchId: 1, branchName: '中吴支行', active: 1 }] });
   if (name === 'branches') return reply(res, 200, { items: [{ id: 1, name: '中吴支行', code: 'B1', active: 1 }] });
   if (name === 'assets') return reply(res, 200, { items: [] });
+  if (name === 'admin/ip-pool-asset-options') return reply(res, 200, { items: [] });
   if (name.startsWith('admin/ip-pool-v2?')) {
     const page = Number((name.match(/[?&]page=(\d+)/) || [, 1])[1]);
     let rows = page === 1 ? pool : [{ ...network, id: 101, ipAddress: '108.56.204.100', state: 'AVAILABLE', editable: 1, version: 0 }];

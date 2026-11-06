@@ -36,6 +36,7 @@
     closeDialog(document.getElementById('systemModal'));
     closeDialog(document.getElementById('ipModal'));
     closeDialog(document.getElementById('editModal'));
+    closeDialog(document.getElementById('assignmentImportModal'));
     render();
   }
 
@@ -111,7 +112,7 @@
   }
 
   function msg(text, bad) {
-    var n = (S.noticeTarget && document.getElementById(S.noticeTarget)) || document.getElementById('editNotice') || document.getElementById('notice');
+    var n = (S.noticeTarget && document.getElementById(S.noticeTarget)) || document.getElementById('editNotice') || document.getElementById('notice') || document.getElementById('rangeNotice');
     if (n) n.innerHTML = '<div class="notice ' + (bad ? 'bad' : '') + '">' + e(text) + '</div>';
   }
 
@@ -285,13 +286,14 @@
     var x = '<button data-v="home">概览与密码</button>';
     if (S.u.mustChangePassword) return x + '<small class="nav-lock">修改密码后开放其他功能</small>';
     if (S.u.role === 'ADMIN') {
-      x += '<small>账号与审批</small><button data-v="users">账号管理</button><button data-v="applications">申请审批 <span id="navPending" class="nav-badge">' + (S.pendingCount == null ? '…' : S.pendingCount) + '</span></button>';
+      x += '<button data-v="setup">首次使用向导</button><small>账号与审批</small><button data-v="users">账号管理</button><button data-v="applications">申请审批 <span id="navPending" class="nav-badge">' + (S.pendingCount == null ? '…' : S.pendingCount) + '</span></button>';
       x += '<small>基础资料</small><button data-v="branches">支行</button><button data-v="outlets">网点</button><button data-v="outletDirectory">网点信息</button><button data-v="ranges">地址规划</button><button data-v="pool">IP 资源池</button><button data-v="settings">设置</button>';
       x += '<small>资源运营</small><button data-v="overview">资源概览</button><button data-v="releases">释放记录</button><button data-v="exports">数据导出</button>';
       x += '<small>安全</small><button data-v="backups">备份与恢复</button><button data-v="notifications">站内通知</button><button data-v="audit">审计日志</button>';
     } else {
       x += '<small>IP 申请</small><button data-v="apply">提交申请</button><button data-v="mine">我的申请</button><button data-v="myips">我的 IP</button><button data-v="notifications">站内通知</button>';
     }
+    x += '<small>实用工具</small><button data-v="calculator">IP地址计算器</button>';
     return x;
   }
 
@@ -303,7 +305,7 @@
       loginPage();
       return;
     }
-    app.innerHTML = '<header><div class="brand"><i>IP</i> IP 资源管理平台 <em>3.9.0 · V025</em></div><div>' + e(S.u.realName) + ' · ' + role(S.u.role) + ' <button id="out">退出</button></div></header><div class="shell"><nav id="nav">' + nav() + '</nav><div class="workspace-area"><div id="backupReminder"></div><main id="main"></main></div></div>';
+    app.innerHTML = '<header><div class="brand"><i>IP</i> IP 资源管理平台 <em>3.15.0 · V031</em></div><div>' + e(S.u.realName) + ' · ' + role(S.u.role) + ' <button id="out">退出</button></div></header><div class="shell"><nav id="nav">' + nav() + '</nav><div class="workspace-area"><div id="backupReminder"></div><main id="main"></main></div></div>';
     document.getElementById('out').onclick = function () {
       q('POST', 'auth/logout', {}, function () {
         S = { u: null, c: null, v: 'home', branches: [] };
@@ -333,6 +335,8 @@
       buttons[i].className = buttons[i].getAttribute('data-v') === S.v ? 'active' : '';
     }
     if (S.v === 'home') home();
+    else if (S.v === 'setup' && S.u.role === 'ADMIN') window.IpamSetup.mount(document.getElementById('main'), {request:q, escape:e, head:head, step:S.setupStep || 0, navigate:function(page,step){S.setupStep=step;S.setupActive=true;S.v=page;view();}});
+    else if (S.v === 'calculator') window.IpamCalculator.mount(document.getElementById('main'));
     else if (S.v === 'users') users();
     else if (S.v === 'applications') applicationsV4();
     else if (S.v === 'branches') branches();
@@ -350,6 +354,14 @@
     else if (S.v === 'settings') settingsV4();
     else if (S.v === 'backups' && S.u.role === 'ADMIN') backupsPage();
     else audit();
+    var oldReturn = document.getElementById('setupReturn');
+    if (oldReturn) oldReturn.parentNode.removeChild(oldReturn);
+    if (S.setupActive && S.v !== 'setup' && S.u.role === 'ADMIN') {
+      var back = document.createElement('div'); back.id='setupReturn';back.className='setup-return';
+      back.innerHTML='<span>正在进行首次配置，保存当前资料后可继续下一步。</span><button id="backToSetup">返回首次使用向导</button>';
+      document.getElementById('main').parentNode.insertBefore(back,document.getElementById('main'));
+      document.getElementById('backToSetup').onclick=function(){S.v='setup';view();};
+    }
   }
 
   function refreshBackupReminder() {
@@ -432,7 +444,7 @@
       x.send(null);
     }
     function countSummary(counts) {
-      var names = { users: '账号', userCount: '账号', branches: '支行', branchCount: '支行', outlets: '网点', outletCount: '网点', ipRanges: '地址段', rangeCount: '地址段', ipAddresses: 'IP 地址', ipPoolCount: 'IP 地址', ipPool: 'IP 地址', applications: '申请记录', applicationCount: '申请记录', assignments: '分配记录', assignmentCount: '分配记录', releaseEvents: '释放记录', auditLogs: '审计记录', assets: '资产定义', sys_user: '账号', branch: '支行', outlet: '网点', ip_range: '地址段', ip_address_pool: 'IP 地址', ip_application: '申请记录', ip_assignment: '分配记录', ip_release_event: '释放记录', audit_log: '审计记录', asset_definition: '资产定义' }, h = '', key;
+      var names = { users: '账号', userCount: '账号', branches: '支行', branchCount: '支行', outlets: '网点', outletCount: '网点', ipRanges: '地址段', rangeCount: '地址段', ipAddresses: 'IP 地址', ipPoolCount: 'IP 地址', ipPool: 'IP 地址', applications: '申请记录', applicationCount: '申请记录', assignments: '分配记录', assignmentCount: '分配记录', releaseEvents: '释放记录', auditLogs: '审计记录', assets: '资产定义', sys_user: '账号', branch: '支行', outlet: '网点', ip_range: '地址段', ip_address_pool: 'IP 地址', ip_application: '申请记录', ip_assignment: '分配记录', ip_release_event: '释放记录', audit_log: '审计记录', asset_definition: '资产定义', assignment_import_job: '批量补录任务', assignment_import_row: '批量补录明细', outlet_directory: '网点信息', directory_import_job: '网点信息导入任务' }, h = '', key;
       for (key in counts) if (counts.hasOwnProperty(key)) h += '<span>' + e(names[key] || '数据记录') + '<b>' + e(counts[key]) + '</b></span>';
       return h;
     }
@@ -480,6 +492,7 @@
   function refreshPendingBadge() {
     if (!S.u || S.u.role !== 'ADMIN' || S.u.mustChangePassword) return;
     q('GET', 'admin/dashboard', null, function (r) {
+      if (S.v !== 'home' || !document.getElementById('dashboard')) return;
       S.pendingCount = r.pendingCount;
       if (document.getElementById('navPending')) document.getElementById('navPending').innerHTML = r.pendingCount;
     });
@@ -494,7 +507,7 @@
     if (S.u.role === 'ADMIN' && !S.u.mustChangePassword) q('GET', 'admin/dashboard', null, function (r) {
       S.pendingCount = r.pendingCount;
       if (document.getElementById('navPending')) document.getElementById('navPending').innerHTML = r.pendingCount;
-      document.getElementById('dashboard').innerHTML = '<div class="stats five"><div>支行<strong>' + r.branchCount + '</strong></div><div>网点<strong>' + r.outletCount + '</strong></div><div>未绑定地址段<strong class="' + (r.unboundOutletCount ? 'warn' : 'good') + '">' + r.unboundOutletCount + '</strong></div><div>可用 IP<strong class="good">' + r.availableIpCount + '</strong></div><div>待审批<strong>' + r.pendingCount + '</strong></div></div><section class="card guide"><h3>基础资料配置向导</h3><div class="guide-steps"><button data-guide="branches"><b>① 创建支行</b><span>' + (r.branchCount ? '已创建 ' + r.branchCount + ' 个' : '尚未创建') + '</span></button><button data-guide="outlets"><b>② 创建网点</b><span>' + (r.outletCount ? '已创建 ' + r.outletCount + ' 个' : '尚未创建') + '</span></button><button data-guide="ranges"><b>③ 绑定地址段</b><span>' + (r.unboundOutletCount ? r.unboundOutletCount + ' 个网点待绑定' : '绑定检查完成') + '</span></button><button data-guide="pool"><b>④ 检查资源池</b><span>当前可用 ' + r.availableIpCount + ' 个</span></button></div></section>';
+      document.getElementById('dashboard').innerHTML = '<div class="stats five"><div>支行<strong>' + r.branchCount + '</strong></div><div>网点<strong>' + r.outletCount + '</strong></div><div>未绑定地址段<strong class="' + (r.unboundOutletCount ? 'warn' : 'good') + '">' + r.unboundOutletCount + '</strong></div><div>可用 IP<strong class="good">' + r.availableIpCount + '</strong></div><div>待审批<strong>' + r.pendingCount + '</strong></div></div><section class="card guide"><h3>基础资料配置向导</h3><p>首次部署请先核对本行地址规则，再建立机构、资产与地址池。</p><button class="primary" data-guide="setup">打开首次使用向导</button><div class="guide-steps"><button data-guide="branches"><b>① 创建支行</b><span>' + (r.branchCount ? '已创建 ' + r.branchCount + ' 个' : '尚未创建') + '</span></button><button data-guide="outlets"><b>② 创建网点</b><span>' + (r.outletCount ? '已创建 ' + r.outletCount + ' 个' : '尚未创建') + '</span></button><button data-guide="ranges"><b>③ 绑定地址段</b><span>' + (r.unboundOutletCount ? r.unboundOutletCount + ' 个网点待绑定' : '绑定检查完成') + '</span></button><button data-guide="pool"><b>④ 检查资源池</b><span>当前可用 ' + r.availableIpCount + ' 个</span></button></div></section>';
       var buttons = document.getElementById('dashboard').getElementsByTagName('button');
       var i;
       for (i = 0; i < buttons.length; i++) buttons[i].onclick = function () { S.v = this.getAttribute('data-guide'); view(); };
@@ -594,6 +607,7 @@
 
   function closeDialog(root) {
     if (!root) return;
+    if (root.id === 'assignmentImportModal' && S.noticeTarget === 'assignmentImportNotice') S.noticeTarget = '';
     if (root.parentNode) root.parentNode.removeChild(root);
     if (lastDialogFocus && lastDialogFocus.focus) lastDialogFocus.focus();
     lastDialogFocus = null;
@@ -675,7 +689,7 @@
     document.getElementById(id).innerHTML = '<button id="' + id + 'Prev" class="secondary"' + (page <= 1 ? ' disabled' : '') + '>上一页</button><span>第 ' + page + ' / ' + pages + ' 页，共 ' + total + ' 条</span><label class="visually-hidden" for="' + id + 'Input">跳转页码</label><input id="' + id + 'Input" type="number" min="1" max="' + pages + '" value="' + page + '"><button id="' + id + 'Go" class="secondary">跳转</button><button id="' + id + 'Next" class="secondary"' + (page >= pages ? ' disabled' : '') + '>下一页</button>';
     document.getElementById(id + 'Prev').onclick = function () { if (page > 1) change(page - 1); };
     document.getElementById(id + 'Next').onclick = function () { if (page < pages) change(page + 1); };
-    document.getElementById(id + 'Go').onclick = function () { var target = Number(val(id + 'Input')); if (target >= 1 && target <= pages) change(target); else msg('请输入 1 至 ' + pages + ' 的页码。', 1); };
+    document.getElementById(id + 'Go').onclick = function () { var target = Number(val(id + 'Input')); if (Math.floor(target) === target && target >= 1 && target <= pages) change(target); else msg('请输入 1 至 ' + pages + ' 的页码。', 1); };
     return page;
   }
 
@@ -741,28 +755,87 @@
     });
   }
 
+  var directoryLineFields = [
+    ['flat_status','扁平化状态'],['line1_carrier','专线一运营商'],['line1_bandwidth','专线一带宽'],['line1_fee','专线一月费（元）'],
+    ['line2_carrier','专线二运营商'],['line2_bandwidth','专线二带宽'],['line2_fee','专线二月费（元）']
+  ];
+  function directoryLineInputs(item) {
+    var html = '<div class="directory-lines-form"><h4>双线信息</h4><p>月费留空表示待补充；页面清空后保存可删除原值。</p>';
+    directoryLineFields.forEach(function (field) {
+      html += '<div><label for="dir_' + field[0] + '">' + field[1] + '</label>';
+      if (field[0] === 'flat_status') {
+        html += '<select id="dir_flat_status">';
+        ['待确认','扁平化','非扁平化'].forEach(function (value) { html += '<option' + ((item.flat_status || '待确认') === value ? ' selected' : '') + '>' + value + '</option>'; });
+        html += '</select>';
+      } else html += '<input id="dir_' + field[0] + '" maxlength="100" value="' + e(item[field[0]] == null ? '' : item[field[0]]) + '">';
+      html += '</div>';
+    });
+    return html + '</div>';
+  }
+  function directoryLineSummary(item) {
+    var html = '', i;
+    for(i=1;i<=2;i++) html += '<div class="directory-line"><b>专线' + (i===1?'一':'二') + '</b> ' + e(item['line'+i+'_carrier'] || '待补充') + ' · ' +
+      e(item['line'+i+'_bandwidth'] || '待补充') + '<small class="summary-line">月费 ' + (item['line'+i+'_fee'] == null ? '待补充' : e(item['line'+i+'_fee'])+' 元') + '</small></div>';
+    var sum = item.line1_fee == null || item.line2_fee == null ? '待补充' :
+      ((Math.round(Number(item.line1_fee)*100)+Math.round(Number(item.line2_fee)*100))/100).toFixed(2)+' 元/月';
+    return html + '<small>合计 '+sum+'</small>';
+  }
+  function previewDirectory(file, button) {
+    var fileInput = document.getElementById('directoryFile'), result = document.getElementById('directoryImportResult');
+    result.innerHTML = '';
+    upload('admin/outlet-directory/preview',file,function (preview) {
+      if(fileInput !== document.getElementById('directoryFile') || fileInput.files[0] !== file) return;
+      var html = '<p>共 '+preview.totalRows+' 行，新增 '+preview.insertedRows+' 行，更新 '+preview.updatedRows+' 行，错误 '+preview.errorRows+' 行。</p>';
+      var fields = [['outlet_name','网点名称'],['org_code','机构编码'],['outlet_address','地址'],['phone','电话']].concat(directoryLineFields);
+      preview.items.forEach(function (item) {
+        html += '<details><summary>第 '+e(item.rowNumber)+' 行 · '+e(item.branchCode)+' / '+e(item.outletNo)+' · '+e(item.action)+'</summary>';
+        if(item.message) html += '<p class="notice bad">'+e(item.message)+'</p>';
+        else {
+          html += '<div class="table-scroll"><table><tr><th>字段</th><th>原值</th><th>导入后</th></tr>';
+          fields.forEach(function (field) {
+            var before=item.before[field[0]], after=item.after[field[0]];
+            if(before !== after) html += '<tr><td>'+field[1]+'</td><td>'+e(before == null ? '未填写' : before)+'</td><td>'+e(after == null ? '未填写' : after)+'</td></tr>';
+          });
+          html += '</table></div>';
+        }
+        html += '</details>';
+      });
+      html += '<p>空白字段保留原值。预览30分钟内有效。</p>';
+      if(preview.errorRows) html += '<p class="notice bad">请修正错误后重新上传，本批尚未写入。</p>';
+      else html += '<button id="directoryConfirm" class="primary">确认写入 '+(preview.insertedRows+preview.updatedRows)+' 条</button>';
+      result.innerHTML = html;
+      var confirm = document.getElementById('directoryConfirm');
+      if(confirm) confirm.onclick = function () {
+        q('POST','admin/outlet-directory/confirm',{id:preview.id},function (done) {
+          reloadMessage(outletDirectory,'已新增 '+done.insertedRows+' 条，更新 '+done.updatedRows+' 条网点信息。');
+        },function () {confirm.disabled=true;},confirm,'写入中…');
+      };
+    },null,button);
+  }
+
   function outletDirectory() {
     getBranches(function () {
       S.outletDirectoryFilter = S.outletDirectoryFilter || { branchId: '', q: '', page: 1 };
       document.getElementById('main').innerHTML = head('基础资料', '网点信息', '独立展示库，不参与 IP 申请、地址段绑定或资源分配。') +
         '<section class="card filter-card"><div class="filter-heading"><div><h3>筛选网点信息</h3><p>可按所属支行，或网点号、机构编码、名称、地址、电话检索。</p></div><span id="directoryCount" class="filter-state">待查询</span></div><div id="notice"></div><div class="filter-layout"><div class="filter-fields"><div class="filter-field"><label for="directoryBranch">所属支行</label><select id="directoryBranch"><option value="">全部支行</option>' + opts(S.outletDirectoryFilter.branchId).replace('<option value="">请选择支行</option>', '') + '</select></div><div class="filter-field filter-keyword"><label for="directoryQ">关键词</label><input id="directoryQ" value="' + e(S.outletDirectoryFilter.q) + '" placeholder="网点号、名称、地址或电话"></div></div><div class="filter-actions"><button id="directoryReset" class="secondary">清空</button><button id="directorySearch" class="primary">查询</button></div></div></section>' +
         '<section class="card"><h3>网点信息列表</h3><div id="table">加载中…</div><div id="directoryPager" class="pager"></div></section>' +
-        '<section class="card"><div class="card-title-row"><div><h3>Excel 上传</h3><p>仅支持 .xlsx；先下载模板。相同支行下的网点号已存在时整批不会写入，请逐条编辑该记录。</p></div><div class="template-links"><a href="/api/v1/admin/outlet-directory/template.xlsx">下载 Excel 模板</a></div></div><div class="inline-upload"><input id="directoryFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><button id="directoryUpload" class="primary">上传并导入</button></div></section>';
+        '<section class="card"><div class="card-title-row"><div><h3>Excel 上传</h3><p>使用 .xlsx 模板，按支行编码＋网点号匹配。上传后先预览新增、更新和错误明细，再确认写入。</p></div><div class="template-links"><a href="/api/v1/admin/outlet-directory/template.xlsx">下载完整模板</a> <a href="/api/v1/admin/outlet-directory/template.xlsx?mode=lines">下载专线补充模板</a></div></div><div class="inline-upload"><input id="directoryFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><button id="directoryUpload" class="primary">上传并预览</button></div><div id="directoryImportResult" aria-live="polite"></div></section>';
       function load() {
         var path = 'admin/outlet-directory?branchId=' + encodeURIComponent(S.outletDirectoryFilter.branchId) + '&q=' + encodeURIComponent(S.outletDirectoryFilter.q);
         q('GET', path, null, function (r) {
-          var h = '<table><tr><th>所属支行</th><th>网点号</th><th>机构编码</th><th>网点名称</th><th>网点地址</th><th>电话</th><th>操作</th></tr>', page, shown, i, x;
+          var h = '<table><tr><th>所属支行</th><th>网点号</th><th>机构编码</th><th>网点名称</th><th>网点地址</th><th>电话</th><th>扁平化状态</th><th>双线信息</th><th>操作</th></tr>', page, shown, i, x;
           page = Math.max(1, Math.min(Number(S.outletDirectoryFilter.page || 1), Math.max(1, Math.ceil(r.items.length / 20)))); S.outletDirectoryFilter.page = page; shown = r.items.slice((page - 1) * 20, page * 20);
-          for (i = 0; i < shown.length; i++) { x = shown[i]; h += '<tr><td>' + e(x.branchName) + '（' + e(x.branchCode) + '）</td><td>' + e(x.outletNo) + '</td><td>' + e(x.orgCode) + '</td><td>' + e(x.outletName) + '</td><td>' + e(x.outletAddress || '—') + '</td><td>' + e(x.phone || '—') + '</td><td><button data-edit="' + i + '">编辑</button></td></tr>'; }
+          for (i = 0; i < shown.length; i++) { x = shown[i]; h += '<tr><td>' + e(x.branchName) + '（' + e(x.branchCode) + '）</td><td>' + e(x.outletNo) + '</td><td>' + e(x.orgCode) + '</td><td>' + e(x.outletName) + '</td><td>' + e(x.outletAddress || '—') + '</td><td>' + e(x.phone || '—') + '</td><td>' + e(x.flat_status || '待确认') + '</td><td>' + directoryLineSummary(x) + '</td><td><button data-edit="' + i + '">编辑</button></td></tr>'; }
           document.getElementById('directoryCount').innerHTML = '匹配 ' + r.items.length + ' 条';
-          document.getElementById('table').innerHTML = r.items.length ? h + '</table>' : empty('暂无符合条件的网点信息', '可调整筛选条件，或下载模板后上传 Excel 数据。');
+          document.getElementById('table').innerHTML = r.items.length ? '<div class="table-scroll">' + h + '</table></div>' : empty('暂无符合条件的网点信息', '可调整筛选条件，或下载模板后上传 Excel 数据。');
           localPager('directoryPager', page, r.items.length, 20, function (target) { S.outletDirectoryFilter.page = target; load(); });
-          bindEditButtons('table', function (button) { var item = shown[Number(button.getAttribute('data-edit'))]; editDialog('编辑网点信息', '<div><label for="editOutletNo">网点号 <span class="required">*</span></label><input id="editOutletNo" value="' + e(item.outletNo) + '"></div><div><label for="editOrgCode">机构编码 <span class="required">*</span></label><input id="editOrgCode" value="' + e(item.orgCode) + '"></div><div><label for="editOutletName">网点名称 <span class="required">*</span></label><input id="editOutletName" value="' + e(item.outletName) + '"></div><div><label for="editOutletAddress">网点地址</label><input id="editOutletAddress" value="' + e(item.outletAddress || '') + '"></div><div><label for="editPhone">电话</label><input id="editPhone" value="' + e(item.phone || '') + '"></div><div><label for="editDirectoryBranch">所属支行 <span class="required">*</span></label><select id="editDirectoryBranch">' + opts(item.branchId) + '</select></div>', function (root, saveButton) { q('PUT', 'admin/outlet-directory/' + item.id, { outletNo: editValue('editOutletNo'), orgCode: editValue('editOrgCode'), outletName: editValue('editOutletName'), outletAddress: editValue('editOutletAddress'), phone: editValue('editPhone'), branchId: Number(editValue('editDirectoryBranch')) }, function () { closeDialog(root); load(); msg('网点信息已保存。', 0); }, null, saveButton, '保存中…'); }, '此模块仅维护展示资料，不会变更 IP 资源配置。'); });
+          bindEditButtons('table', function (button) { var item = shown[Number(button.getAttribute('data-edit'))]; editDialog('编辑网点信息', '<div><label for="editOutletNo">网点号 <span class="required">*</span></label><input id="editOutletNo" value="' + e(item.outletNo) + '"></div><div><label for="editOrgCode">机构编码 <span class="required">*</span></label><input id="editOrgCode" value="' + e(item.orgCode) + '"></div><div><label for="editOutletName">网点名称 <span class="required">*</span></label><input id="editOutletName" value="' + e(item.outletName) + '"></div><div><label for="editOutletAddress">网点地址</label><input id="editOutletAddress" value="' + e(item.outletAddress || '') + '"></div><div><label for="editPhone">电话</label><input id="editPhone" value="' + e(item.phone || '') + '"></div><div><label for="editDirectoryBranch">所属支行 <span class="required">*</span></label><select id="editDirectoryBranch">' + opts(item.branchId) + '</select></div>' + directoryLineInputs(item), function (root, saveButton) { var body = { outletNo: editValue('editOutletNo'), orgCode: editValue('editOrgCode'), outletName: editValue('editOutletName'), outletAddress: editValue('editOutletAddress'), phone: editValue('editPhone'), branchId: Number(editValue('editDirectoryBranch')) }; directoryLineFields.forEach(function(field){body[field[0]]=editValue('dir_'+field[0]);}); q('PUT','admin/outlet-directory/'+item.id,body, function () { closeDialog(root); load(); msg('网点信息已保存。', 0); }, null, saveButton, '保存中…'); }, '此模块仅维护展示资料，不会变更 IP 资源配置。'); });
         }, function () { var table = document.getElementById('table'); if (table) table.innerHTML = empty('网点信息加载失败', '请根据页面提示处理后重试。'); });
       }
       document.getElementById('directorySearch').onclick = function () { S.outletDirectoryFilter = { branchId: val('directoryBranch'), q: val('directoryQ'), page: 1 }; load(); };
       document.getElementById('directoryReset').onclick = function () { S.outletDirectoryFilter = { branchId: '', q: '', page: 1 }; document.getElementById('directoryBranch').value = ''; document.getElementById('directoryQ').value = ''; load(); };
-      document.getElementById('directoryUpload').onclick = function () { var file = document.getElementById('directoryFile').files[0]; if (!file) { msg('请先选择 .xlsx 网点信息文件。', 1); return; } upload('admin/outlet-directory/import', file, function (r) { if (r.errorRows) { msg('导入未写入：共 ' + r.totalRows + ' 行，其中 ' + r.errorRows + ' 行校验失败。第 ' + r.errors[0].rowNumber + ' 行：' + r.errors[0].message, 1); return; } reloadMessage(outletDirectory, '已导入 ' + r.insertedRows + ' 条网点信息。'); }, null, this); };
+      document.getElementById('directoryUpload').onclick = function () { var file = document.getElementById('directoryFile').files[0]; if (!file) { msg('请先选择 .xlsx 网点信息文件。', 1); return; } previewDirectory(file,this); };
+      document.getElementById('directoryFile').onchange = function () {document.getElementById('directoryImportResult').innerHTML='';};
       load();
     });
   }
@@ -1291,7 +1364,7 @@
       for(i=0;i<cats.length;i++){if(cats[i].subcategoryId&&cats[i].categoryActive===1&&cats[i].subcategoryActive===1)mappingOptions+='<option value="'+cats[i].subcategoryId+'">'+e(cats[i].assetType==='TECH'?'科技资产':'非科技资产')+' / '+e(cats[i].name)+' / '+e(cats[i].subcategory)+'</option>';catRows+='<tr><td>'+e(cats[i].assetType==='TECH'?'科技资产':'非科技资产')+'</td><td>'+e(cats[i].name)+'</td><td>'+e(cats[i].subcategory||'—')+'</td><td>'+e(cats[i].categoryActive===1?'启用':'停用')+' / '+e(cats[i].subcategoryId?(cats[i].subcategoryActive===1?'启用':'停用'):'—')+'</td><td><button data-cat-edit="'+i+'">编辑大类</button>' +(cats[i].subcategoryId?'<button data-sub-edit="'+i+'">编辑小类</button>':'')+'</td></tr>';}
       for(i=0;i<mappings.length;i++)mappingRows+='<tr><td>'+e(mappings[i].assetType==='TECH'?'科技资产':'非科技资产')+'</td><td>'+e(mappings[i].category)+'</td><td><b>'+e(mappings[i].subcategory)+'</b></td><td><span class="config-tag">'+e(rangeTypeText(mappings[i].rangeType))+'</span></td><td>'+e(mappings[i].changeReason)+'</td></tr>';
       document.getElementById('main').innerHTML=head('系统设置','地址规划与资产映射','在这里维护默认网络规则和资产字典；已生成的网点地址段不会被规则修改。')+
-        '<section class="card"><div id="notice"></div><h3>默认地址规划</h3><p class="hint">生产网段的前缀决定该网点六类网段的前缀。例如生产网段为 /27，六类网段均为 /27；系统按当前最大偏移自动计算规划块。</p><div class="grid"><div><label>全局地址范围</label><input id="globalCidr" value="'+e(rule.globalCidr)+'" readonly></div><div><label for="defaultPrefix">默认单类网段前缀</label><input id="defaultPrefix" type="number" min="13" max="30" value="'+rule.segmentPrefix+'"></div><div><label for="gatewayOffset">默认网关偏移</label><input id="gatewayOffset" type="number" min="1" value="'+rule.gatewayHostOffset+'"></div><div><label for="dnsPrimary">默认主 DNS</label><input id="dnsPrimary" value="'+e(rule.dnsPrimary)+'"></div><div><label for="dnsSecondary">备用 DNS</label><input id="dnsSecondary" value="'+e(rule.dnsSecondary||'')+'"></div></div><table><tr><th>六类网段</th><th>显示名称</th><th>相对偏移</th></tr>'+segRows+'</table><label for="ruleReason">规则变更说明 <span class="required">*</span></label><textarea id="ruleReason" placeholder="请说明本次默认规则变更的原因"></textarea><button id="saveRule" class="primary">保存并启用新规则</button></section>'+
+        '<section class="card"><div id="notice"></div><h3>默认地址规划</h3><p class="hint">生产网段的前缀决定该网点六类网段的前缀。例如生产网段为 /27，六类网段均为 /27；系统按当前最大偏移自动计算规划块。</p><div class="grid"><div><label>全局地址范围</label><input id="globalCidr" value="'+e(rule.globalCidr)+'"></div><div><label for="defaultPrefix">默认单类网段前缀</label><input id="defaultPrefix" type="number" min="13" max="30" value="'+rule.segmentPrefix+'"></div><div><label for="gatewayOffset">默认网关偏移</label><input id="gatewayOffset" type="number" min="1" value="'+rule.gatewayHostOffset+'"></div><div><label for="dnsPrimary">默认主 DNS</label><input id="dnsPrimary" value="'+e(rule.dnsPrimary)+'"></div><div><label for="dnsSecondary">备用 DNS</label><input id="dnsSecondary" value="'+e(rule.dnsSecondary||'')+'"></div></div><table><tr><th>六类网段</th><th>显示名称</th><th>相对偏移</th></tr>'+segRows+'</table><label for="ruleReason">规则变更说明 <span class="required">*</span></label><textarea id="ruleReason" placeholder="请说明本次默认规则变更的原因"></textarea><button id="saveRule" class="primary">保存并启用新规则</button></section>'+
         '<section class="card"><h3>资产类型与小类</h3><p class="hint">一级类型固定为科技资产、非科技资产；可新增、编辑、停用大类和小类。被历史记录引用的类型只能停用，不能物理删除。</p><button id="addCategory" class="secondary">新增资产大类</button><button id="addSubcategory" class="secondary">新增资产小类</button><div class="table-scroll"><table><tr><th>一级类型</th><th>资产大类</th><th>资产小类</th><th>状态</th><th>操作</th></tr>'+catRows+'</table></div></section>'+
         '<section class="card"><div class="card-title-row"><div><h3>现有小类到网段映射</h3><p class="hint">下表只显示当前生效的映射；一个小类对应一个推荐网段。</p></div><span class="badge">已配置 '+mappings.length+' 项</span></div>'+(mappingRows?'<div class="table-scroll"><table id="mappingCurrent"><tr><th>资产类型</th><th>资产大类</th><th>资产小类</th><th>推荐网段</th><th>修改说明</th></tr>'+mappingRows+'</table></div>':'<div id="mappingCurrent" class="empty"><b>尚未配置小类映射</b><p>请在下方选择已启用的小类和推荐网段后保存。</p></div>')+'</section>'+
         '<section class="card"><h3>配置或修改映射</h3><p class="hint">重新保存同一小类会替换其当前推荐网段，历史版本保留在审计日志中。</p><div class="grid"><div><label for="mappingSub">资产小类</label><select id="mappingSub">'+mappingOptions+'</select></div><div><label for="mappingType">推荐网段</label><select id="mappingType"><option value="PRODUCTION">生产</option><option value="NETWORK_MANAGEMENT">网络管理</option><option value="EXTENSION">扩展</option><option value="MONITORING">监控</option><option value="TEST">测试</option><option value="OFFICE">办公</option></select></div><div><label for="mappingReason">修改说明 <span class="required">*</span></label><input id="mappingReason" maxlength="500"></div></div><button id="saveMapping" class="primary"'+(mappingOptions?'':' disabled')+'>保存映射</button></section>';
@@ -1326,17 +1399,158 @@
   /* Remediation view: the legacy pool function above remains only for backward
      source compatibility.  This is the active view and always opens an edit
      dialog with the IP's current state selected. */
+  function assignmentImportDialog(refreshPool) {
+    if (!S.u || S.u.role !== 'ADMIN') return;
+    var previous = document.getElementById('assignmentImportModal'), root, current = null, pending = false, dirtyFile = false;
+    if (previous) closeDialog(previous);
+    lastDialogFocus = document.activeElement;
+    root = document.createElement('div');
+    root.id = 'assignmentImportModal';
+    root.innerHTML = '<div class="modal"><div class="dialog assignment-import-dialog" role="dialog" aria-modal="true" aria-labelledby="assignmentImportTitle"><div class="dialog-head"><div><h3 id="assignmentImportTitle">批量补录已分配</h3><p>按文件中的 IP 核对资源；只导入通过行，重复和冲突均不会覆盖已有分配。</p></div><button id="closeAssignmentImport" type="button" aria-label="关闭批量补录弹窗">关闭</button></div><div id="assignmentImportNotice" aria-live="polite"></div><section class="assignment-import-step"><div class="card-title-row"><div><h4>1. 准备统一模板</h4><p class="hint">一行一个 IP，必填 IP 地址、资产类型和资产名称；使用人及资源编码按资产规则填写。</p></div><div class="template-links"><a id="assignmentTemplateXlsx" href="/api/v1/admin/assignment-imports/template.xlsx">下载 Excel 模板</a><a id="assignmentTemplateCsv" href="/api/v1/admin/assignment-imports/template.csv">下载 CSV 模板</a></div></div></section><section class="assignment-import-step"><h4>2. 上传并核对逐行结果</h4><div class="inline-upload"><div class="assignment-import-file"><label for="assignmentImportFile" class="file-label">选择 CSV 或 XLSX 文件（不超过 5 MiB / 2000 条）</label><input id="assignmentImportFile" type="file" accept=".csv,.xlsx"></div><button id="previewAssignmentImport" type="button" class="secondary">上传并预览</button></div><div id="assignmentImportPreview">' + empty('等待上传文件', '预览不会修改 IP 状态；上传后可核对可导入、重复跳过和错误行。') + '</div></section><section class="assignment-import-step assignment-import-history"><div class="card-title-row"><h4>最近导入记录</h4><button id="refreshAssignmentImports" type="button" class="quiet">刷新记录</button></div><div id="assignmentImportHistory">正在读取记录…</div></section></div></div>';
+    document.body.appendChild(root);
+    S.noticeTarget = 'assignmentImportNotice';
+    wireDialog(root, 'closeAssignmentImport', 'assignmentImportFile');
+    var dialogKeys = root.onkeydown;
+    root.querySelector('#closeAssignmentImport').onclick = function () { if (!pending) closeDialog(root); };
+    root.onkeydown = function (event) { var ev = event || window.event; if (pending && ev.keyCode === 27) { if (ev.preventDefault) ev.preventDefault(); ev.returnValue = false; return; } dialogKeys(event); };
+
+    function alive() { return !!root.parentNode; }
+    function count(value) { var n = Number(value); return isFinite(n) && n > 0 ? Math.floor(n) : 0; }
+    function pathFor(id, suffix) { return 'admin/assignment-imports/' + encodeURIComponent(String(id)) + (suffix || ''); }
+    function lock(active) {
+      var controls = root.querySelectorAll('button,input'), i;
+      pending = active;
+      for (i = 0; i < controls.length; i++) {
+        if (active) { controls[i].setAttribute('data-import-disabled', controls[i].disabled ? '1' : '0'); controls[i].disabled = true; }
+        else if (controls[i].getAttribute('data-import-disabled') !== null) { controls[i].disabled = controls[i].getAttribute('data-import-disabled') === '1'; controls[i].removeAttribute('data-import-disabled'); }
+      }
+      root.setAttribute('aria-busy', active ? 'true' : 'false');
+    }
+    function request(method, path, body, success, failure, button, text) {
+      if (pending) return;
+      lock(true);
+      q(method, path, body, function (data) { if (!alive()) return; lock(false); success(data); }, function (data) { if (!alive()) return; lock(false); if (failure) failure(data); }, button, text);
+    }
+    function resultText(result) { return { READY: '可导入', DUPLICATE: '重复跳过', ERROR: '错误，不导入', IMPORTED: '已导入' }[result] || '待核对'; }
+    function statusText(status) { return { PREVIEW_READY: '待确认', COMPLETED: '已完成', CANCELLED: '已取消', EXPIRED: '已失效' }[status] || '待核对'; }
+    function resultClass(result) { return { READY: 'status-approved', DUPLICATE: 'status-pending', ERROR: 'status-rejected', IMPORTED: 'status-assigned' }[result] || ''; }
+    function originalFields(row, index) {
+      if (!row.fields) return '';
+      var fields = ['IP地址', '资产类型', '资产名称', '支行名称（核对用）', '网点名称（核对用）', '资源编码', '使用人姓名', '统一认证号', '负责科技管理员账号', '交换机IP', '交换机端口', 'MAC地址', '设备序列号', '补录说明'], h = '<button type="button" class="quiet assignment-import-fields-toggle" data-assignment-row-details="' + index + '" aria-expanded="false" aria-controls="assignmentImportFields' + index + '">查看原表资料</button><div id="assignmentImportFields' + index + '" class="assignment-import-row-fields" style="display:none"><dl>', j;
+      for (j = 0; j < fields.length; j++) h += '<dt>' + e(fields[j]) + '</dt><dd>' + e(row.fields[fields[j]] || '—') + '</dd>';
+      return h + '</dl></div>';
+    }
+    function draw(data) {
+      current = data.preview || data;
+      dirtyFile = false;
+      var ready = count(current.readyRows), total = count(current.totalRows), duplicate = count(current.duplicateRows), errors = count(current.errorRows), imported = count(current.importedRows), completed = current.status === 'COMPLETED', preview = current.status === 'PREVIEW_READY', reportRows = count(current.notImportedRows == null ? total - imported : current.notImportedRows), omitted = preview ? duplicate + errors : reportRows;
+      var h = '<div class="assignment-import-meta"><b>' + e(current.fileName || '导入任务') + '</b><span class="status">' + e(statusText(current.status)) + '</span><small>任务 ' + e(current.id) + ' · 预览版本 ' + e(current.previewVersion) + '</small></div><div class="assignment-import-counts"><div><span>总行数</span><b>' + total + '</b></div><div class="assignment-import-ready"><span>' + (completed ? '已导入' : (preview ? '可导入' : '未执行通过行')) + '</span><b>' + (completed ? imported : ready) + '</b></div><div><span>重复跳过</span><b>' + duplicate + '</b></div><div class="assignment-import-errors"><span>错误</span><b>' + errors + '</b></div></div>';
+      if (completed) h += '<div class="notice"><b>导入完成：成功 ' + imported + ' 条，未导入 ' + omitted + ' 条。</b><br>结果已保留，可下载未导入行修正后重新上传。</div>';
+      else if (preview) h += '<div class="impact" id="assignmentImportImpact"><b>本次仅导入 ' + ready + ' 条通过行，其余 ' + omitted + ' 条不导入。</b><p>重复 ' + duplicate + ' 条将跳过，错误 ' + errors + ' 条须修正后重新上传。已有分配不会被覆盖。</p></div>';
+      else if (current.status === 'EXPIRED') h += '<div class="notice bad">本任务已失效（恢复后请重新上传），不能继续导入。</div>';
+      else if (current.status === 'CANCELLED') h += '<div class="notice">本任务已取消，未执行导入。</div>';
+      else h += '<div class="notice bad">当前任务不可确认，请重新上传并校验。</div>';
+      var rows = current.rows || [], i, row;
+      h += '<div class="table-scroll assignment-import-table"><table><thead><tr><th>文件行</th><th>IP 地址</th><th>资产类型 / 名称</th><th>支行 / 网点</th><th>结果</th><th>原因 / 提示</th></tr></thead><tbody>';
+      for (i = 0; i < rows.length; i++) {
+        row = rows[i];
+        h += '<tr><td>' + e(row.rowNumber) + '</td><td class="assignment-import-ip">' + e(row.ipAddress || '—') + '</td><td>' + e(row.assetType === 'TECH' ? '科技资产' : (row.assetType === 'NON_TECH' ? '非科技资产' : row.assetType || '—')) + '<br><b>' + e(row.assetName || '—') + '</b>' + originalFields(row, i) + '</td><td>' + e(row.branchName || '—') + '<br><small>' + e(row.outletName || '—') + '</small></td><td><span class="status ' + e(resultClass(row.result)) + '">' + e(resultText(row.result)) + '</span></td><td>' + e(row.message || '请核对原表资料。') + '</td></tr>';
+      }
+      h += '</tbody></table></div><div class="assignment-import-actions"><div>' + (reportRows > 0 ? '<a id="downloadAssignmentNotImported" href="/api/v1/' + e(pathFor(current.id, '/not-imported.csv')) + '">' + (preview ? '下载未通过清单 CSV（' : '下载未导入清单 CSV（') + reportRows + '条）</a>' : '<span class="hint">' + (preview ? '本次没有需跳过的行。' : '本批次没有未导入行。') + '</span>') + '</div><div class="assignment-import-action-buttons">';
+      if (preview) h += '<button id="cancelAssignmentPreview" type="button" class="secondary">取消本次预览</button><button id="reloadAssignmentPreview" type="button" class="secondary">重新读取预览</button><button id="confirmAssignmentImport" type="button" class="primary"' + (!ready ? ' disabled' : '') + '>确认导入通过行（' + ready + '条）</button>';
+      h += '</div></div>';
+      root.querySelector('#assignmentImportPreview').innerHTML = h;
+      if (!rows.length) root.querySelector('.assignment-import-table').innerHTML = empty('没有可展示的明细', '请检查文件是否包含数据行。');
+      var details = root.querySelectorAll('[data-assignment-row-details]'), k;
+      for (k = 0; k < details.length; k++) details[k].onclick = function () { var open = this.getAttribute('aria-expanded') === 'true', fields = root.querySelector('#assignmentImportFields' + this.getAttribute('data-assignment-row-details')); this.setAttribute('aria-expanded', open ? 'false' : 'true'); this.innerHTML = open ? '查看原表资料' : '收起原表资料'; fields.style.display = open ? 'none' : 'block'; };
+      if (preview) {
+        root.querySelector('#confirmAssignmentImport').onclick = confirm;
+        root.querySelector('#reloadAssignmentPreview').onclick = function () { loadTask(current.id, this); };
+        root.querySelector('#cancelAssignmentPreview').onclick = function () {
+          request('DELETE', pathFor(current.id), null, function (data) { draw(data && data.id != null ? data : cancelledCopy()); msgAt('assignmentImportNotice', '本次预览已取消，未导入任何数据。', 0); recent(); }, null, this, '取消中…');
+        };
+      }
+    }
+    function cancelledCopy() { var copy = {}, key; for (key in current) if (current.hasOwnProperty(key)) copy[key] = current[key]; copy.status = 'CANCELLED'; copy.notImportedRows = count(copy.totalRows) - count(copy.importedRows); return copy; }
+    function reviewNotice() { msgAt('assignmentImportNotice', '提交期间资源或资产规则发生变化，本次未写入任何分配。已展示最新预览，请核对通过行数量及逐行结果后再次确认。', 1); }
+    function confirm() {
+      if (!current || current.status !== 'PREVIEW_READY' || !count(current.readyRows) || dirtyFile || pending) return;
+      var id = current.id, version = count(current.previewVersion);
+      request('POST', pathFor(id, '/confirm'), { previewVersion: version, acceptPartial: true }, function (data) {
+        draw(data);
+        if (data.requiresReview) { reviewNotice(); recent(); return; }
+        if (current.status === 'COMPLETED') { msgAt('assignmentImportNotice', '已完成通过行导入，正在刷新当前资源池。', 0); if (refreshPool) refreshPool(function () { if (alive()) msgAt('assignmentImportNotice', '已完成通过行导入；当前资源池已刷新。', 0); }); }
+        recent();
+      }, function (data) {
+        if (data && (data.preview || data.rows)) { draw(data); reviewNotice(); }
+        else msgAt('assignmentImportNotice', (data && data.message ? data.message : '确认未完成。') + ' 当前预览已保留；可重新读取预览后核对。', 1);
+      }, this, '正在复核并导入…');
+    }
+    function loadTask(id, button) {
+      request('GET', pathFor(id), null, function (data) { root.querySelector('#assignmentImportFile').value = ''; draw(data); msgAt('assignmentImportNotice', '已读取任务，请核对当前结果。', 0); }, null, button, '读取中…');
+    }
+    function recent() {
+      if (!alive()) return;
+      q('GET', 'admin/assignment-imports/recent', null, function (data) {
+        if (!alive()) return;
+        var items = data.items || [], h = '', i, item;
+        for (i = 0; i < items.length; i++) { item = items[i]; h += '<div class="assignment-import-history-row"><div><b>' + e(item.fileName || '导入任务') + '</b><small>任务 ' + e(item.id) + ' · ' + e(statusText(item.status)) + ' · 共 ' + count(item.totalRows) + ' 条' + (item.status === 'COMPLETED' ? ' · 已导入 ' + count(item.importedRows) + ' 条' : '') + '</small></div><button type="button" class="secondary" data-assignment-import-id="' + e(item.id) + '"' + (pending ? ' disabled data-import-disabled="0"' : '') + '>查看任务</button></div>'; }
+        root.querySelector('#assignmentImportHistory').innerHTML = h || '<p class="hint">暂无导入记录。</p>';
+        var buttons = root.querySelectorAll('[data-assignment-import-id]');
+        for (i = 0; i < buttons.length; i++) buttons[i].onclick = function () { loadTask(this.getAttribute('data-assignment-import-id'), this); };
+      }, function () { if (alive()) root.querySelector('#assignmentImportHistory').innerHTML = '<p class="field-error">记录读取失败，请点击“刷新记录”重试。</p>'; });
+    }
+    root.querySelector('#assignmentImportFile').onchange = function () { dirtyFile = true; var button = root.querySelector('#confirmAssignmentImport'); if (button) button.disabled = true; msgAt('assignmentImportNotice', '已选择新文件，请先上传并预览后再确认导入。', 0); };
+    root.querySelector('#previewAssignmentImport').onclick = function () {
+      if (pending) return;
+      var file = root.querySelector('#assignmentImportFile').files[0], button = this;
+      if (!file) { msgAt('assignmentImportNotice', '请选择 CSV 或 XLSX 文件。', 1); return; }
+      if (!/\.(csv|xlsx)$/i.test(file.name)) { msgAt('assignmentImportNotice', '仅支持 CSV 或 XLSX 文件，请使用统一模板。', 1); return; }
+      if (!file.size || file.size > 5 * 1024 * 1024) { msgAt('assignmentImportNotice', '文件必须大于 0 且不超过 5 MiB，最多 2000 条数据行。', 1); return; }
+      lock(true);
+      upload('admin/assignment-imports', file, function (data) { if (!alive()) return; lock(false); draw(data); msgAt('assignmentImportNotice', '文件校验完成，请核对逐行结果；确认前不会写入分配。', 0); recent(); }, function () { if (alive()) lock(false); }, button);
+    };
+    root.querySelector('#refreshAssignmentImports').onclick = function () { if (!pending) recent(); };
+    recent();
+  }
+
   function poolV3() {
+    var poolView = {};
+    S.poolView = poolView;
     q('GET', 'admin/outlets', null, function (or) {
-      var outlets = or.items || [], currentRows = [], currentPage = 1;
-      S.poolFilter = S.poolFilter || { branchId: '', outletId: '', rangeType: '', state: '', q: '' };
+      if (S.v !== 'pool' || S.poolView !== poolView) return;
+      q('GET', 'admin/ip-pool-asset-options', null, function (ar) {
+      if (S.v !== 'pool' || S.poolView !== poolView) return;
+      var outlets = or.items || [], assets = ar.items || [], currentRows = [], currentPage = 1, loadSequence = 0;
+      S.poolFilter = S.poolFilter || { branchId: '', outletId: '', rangeType: '', state: '', assetType: '', assetId: '', q: '' };
+      S.poolFilter.assetType = S.poolFilter.assetType || '';
+      S.poolFilter.assetId = S.poolFilter.assetId || '';
       document.getElementById('main').innerHTML = head('基础资料', 'IP 资源池', '查询地址、维护分配信息，或将空闲 IP 标记为已占用后补录。') +
-        '<section class="card filter-card pool-filter"><div id="notice"></div><div class="filter-layout"><div class="filter-fields"><div class="filter-field"><label for="poolBranch">支行</label><select id="poolBranch"></select></div><div class="filter-field"><label for="poolOutlet">网点</label><select id="poolOutlet"></select></div><div class="filter-field"><label for="poolType">网段类型</label><select id="poolType"><option value="">全部六类网段</option><option value="PRODUCTION">生产</option><option value="NETWORK_MANAGEMENT">网络管理</option><option value="EXTENSION">扩展</option><option value="MONITORING">监控</option><option value="TEST">测试</option><option value="OFFICE">办公</option></select></div><div class="filter-field"><label for="poolState">地址状态</label><select id="poolState"><option value="">全部状态</option><option value="AVAILABLE">可用</option><option value="OCCUPIED">已占用</option><option value="ASSIGNED">已分配</option><option value="SYSTEM_RESERVED">系统保留</option><option value="MANUAL_RESERVED">人工保留</option><option value="DISABLED">停用</option></select></div><div class="filter-field filter-keyword"><label for="poolSearch">查询</label><input id="poolSearch" value="' + e(S.poolFilter.q) + '" placeholder="完整 IP、姓名、认证号、资源编码或资产名称"></div></div><div class="filter-actions"><button id="poolQuery" class="primary">查询</button><button id="poolReset" class="secondary">重置</button></div></div></section>' +
-        '<section class="card pool-card"><div class="card-title-row"><h3>地址列表</h3><span id="poolCount" class="badge">加载中</span></div><div class="batch-bar"><span id="selectedCount">已选择 0 个空闲 IP</span><button id="batchOccupied" class="secondary" disabled>标记为已占用</button><button id="clearPoolSelection" class="quiet" disabled>清空选择</button><small>仅选择当前页的可用地址；已占用后可补录信息。</small></div><div id="table">加载中…</div><div id="poolPager" class="pager"></div></section>';
+        '<section class="card filter-card pool-filter"><div id="notice"></div><div class="filter-layout"><div class="filter-fields"><div class="filter-field"><label for="poolBranch">支行</label><select id="poolBranch"></select></div><div class="filter-field"><label for="poolOutlet">网点</label><select id="poolOutlet"></select></div><div class="filter-field"><label for="poolAssetType">资产大类</label><select id="poolAssetType"><option value="">全部资产大类</option><option value="TECH">科技资产</option><option value="NON_TECH">非科技资产</option></select></div><div class="filter-field"><label for="poolAssetId">资产小类（资产名称）</label><select id="poolAssetId"></select></div><div class="filter-field"><label for="poolType">网段类型</label><select id="poolType"><option value="">全部六类网段</option><option value="PRODUCTION">生产</option><option value="NETWORK_MANAGEMENT">网络管理</option><option value="EXTENSION">扩展</option><option value="MONITORING">监控</option><option value="TEST">测试</option><option value="OFFICE">办公</option></select></div><div class="filter-field"><label for="poolState">地址状态</label><select id="poolState"><option value="">全部状态</option><option value="AVAILABLE">可用</option><option value="OCCUPIED">已占用</option><option value="ASSIGNED">已分配</option><option value="SYSTEM_RESERVED">系统保留</option><option value="MANUAL_RESERVED">人工保留</option><option value="DISABLED">停用</option></select></div><div class="filter-field filter-keyword"><label for="poolSearch">查询</label><input id="poolSearch" value="' + e(S.poolFilter.q) + '" placeholder="完整 IP、姓名、认证号、资源编码或资产名称"></div><div class="filter-field filter-actions pool-filter-actions"><button id="poolQuery" class="primary">查询</button><button id="poolReset" class="secondary">重置</button></div></div></div></section>' +
+        '<section class="card pool-card"><div class="card-title-row"><div class="pool-list-title"><h3>地址列表</h3><span id="poolCount" class="badge">加载中</span></div><button id="openAssignmentImport" class="secondary" type="button">批量补录已分配</button></div><div class="batch-bar"><span id="selectedCount">已选择 0 个空闲 IP</span><button id="batchOccupied" class="secondary" disabled>标记为已占用</button><button id="clearPoolSelection" class="quiet" disabled>清空选择</button><small>仅选择当前页的可用地址；已占用后可补录信息。</small></div><div id="table">加载中…</div><div id="poolPager" class="pager"></div></section>';
 
       function branchOptions() { var seen = {}, h = '<option value="">全部支行</option>', i; for (i = 0; i < outlets.length; i++) if (!seen[outlets[i].branchId]) { seen[outlets[i].branchId] = 1; h += '<option value="' + outlets[i].branchId + '"' + (String(S.poolFilter.branchId) === String(outlets[i].branchId) ? ' selected' : '') + '>' + e(outlets[i].branchName) + '</option>'; } return h; }
       function outletOptions() { var h = '<option value="">全部网点</option>', i; for (i = 0; i < outlets.length; i++) if (String(outlets[i].branchId) === String(S.poolFilter.branchId)) h += '<option value="' + outlets[i].id + '"' + (String(S.poolFilter.outletId) === String(outlets[i].id) ? ' selected' : '') + '>' + e(outlets[i].name) + '（' + e(outlets[i].code) + '）</option>'; return h; }
-      function fillFilters() { document.getElementById('poolBranch').innerHTML = branchOptions(); document.getElementById('poolOutlet').innerHTML = outletOptions(); document.getElementById('poolOutlet').disabled = !S.poolFilter.branchId; document.getElementById('poolType').value = S.poolFilter.rangeType; document.getElementById('poolState').value = S.poolFilter.state; }
+      function assetOptions() {
+        var h = '<option value="">全部资产小类</option>', groups = {}, order = [], i, item, key, group, type, label;
+        for (i = 0; i < assets.length; i++) {
+          item = assets[i];
+          if (S.poolFilter.assetType && item.assetType !== S.poolFilter.assetType) continue;
+          key = 'asset-' + item.id; type = item.assetType === 'TECH' ? '科技资产' : '非科技资产';
+          if (!groups[key]) { groups[key] = { id: item.id, names: [], types: [], active: false, deleted: true }; order.push(groups[key]); }
+          group = groups[key];
+          if (group.names.indexOf(item.name) < 0) group.names.push(item.name);
+          if (group.types.indexOf(type) < 0) group.types.push(type);
+          if (Number(item.active) === 1) group.active = true;
+          if (!item.deletedAt) group.deleted = false;
+        }
+        for (i = 0; i < order.length; i++) {
+          group = order[i]; label = group.names.join(' / ') + (!S.poolFilter.assetType ? '（' + group.types.join(' / ') + '）' : '') + (group.deleted ? '（已删除）' : !group.active ? '（已停用）' : '');
+          h += '<option value="' + e(group.id) + '">' + e(label) + '</option>';
+        }
+        return h;
+      }
+      function fillFilters() { document.getElementById('poolBranch').innerHTML = branchOptions(); document.getElementById('poolOutlet').innerHTML = outletOptions(); document.getElementById('poolOutlet').disabled = !S.poolFilter.branchId; document.getElementById('poolType').value = S.poolFilter.rangeType; document.getElementById('poolState').value = S.poolFilter.state; document.getElementById('poolAssetType').value = S.poolFilter.assetType; document.getElementById('poolAssetId').innerHTML = assetOptions(); document.getElementById('poolAssetId').value = S.poolFilter.assetId; S.poolFilter.assetId = val('poolAssetId'); }
       function assignedValue(item, normal, manual) { return item.assignmentSource === 'MANUAL_REGISTRATION' ? item[manual] : item[normal]; }
       function requiresCode(item) { return Number(item.requiresResourceCode == null ? assignedValue(item, 'requiresResourceCode', 'manualRequiresResourceCode') : item.requiresResourceCode) === 1; }
       function allocationDisplay(item) {
@@ -1438,12 +1652,17 @@
         updateSelected();
       }
       function actionButton(action, index, text, klass) { return '<button type="button" class="' + (klass || 'secondary') + '" data-action="' + action + '" data-row="' + index + '" data-' + action + '="' + index + '">' + text + '</button>'; }
-      function load(page) {
-        currentPage = page;
+      function load(page, after) {
+        currentPage = S.poolFilter.page = page;
         S.poolFilter.q = val('poolSearch');
-        var url = 'admin/ip-pool-v2?branchId=' + encodeURIComponent(S.poolFilter.branchId) + '&outletId=' + encodeURIComponent(S.poolFilter.outletId) + '&rangeType=' + encodeURIComponent(S.poolFilter.rangeType) + '&state=' + encodeURIComponent(S.poolFilter.state) + '&q=' + encodeURIComponent(S.poolFilter.q) + '&page=' + page;
+        var sequence = ++loadSequence, checks = document.querySelectorAll('#table input.pool-check'), ci;
+        for (ci = 0; ci < checks.length; ci++) checks[ci].checked = false;
+        updateSelected();
+        var url = 'admin/ip-pool-v2?branchId=' + encodeURIComponent(S.poolFilter.branchId) + '&outletId=' + encodeURIComponent(S.poolFilter.outletId) + '&rangeType=' + encodeURIComponent(S.poolFilter.rangeType) + '&state=' + encodeURIComponent(S.poolFilter.state) + '&assetType=' + encodeURIComponent(S.poolFilter.assetType) + '&assetId=' + encodeURIComponent(S.poolFilter.assetId) + '&q=' + encodeURIComponent(S.poolFilter.q) + '&page=' + page;
         q('GET', url, null, function (r) {
-          if (S.v !== 'pool' || !document.getElementById('poolPager')) return;
+          if (sequence !== loadSequence || S.v !== 'pool' || S.poolView !== poolView || !document.getElementById('poolPager')) return;
+          var lastPage = Math.max(1, Math.ceil(r.total / r.pageSize));
+          if (page > lastPage) { load(lastPage, after); return; }
           currentRows = r.items || [];
           var h = '<div class="table-scroll pool-table-scroll"><table class="pool-table"><colgroup><col class="pool-col-check"><col class="pool-col-org"><col class="pool-col-network"><col class="pool-col-ip"><col class="pool-col-state"><col class="pool-col-summary"><col class="pool-col-actions"></colgroup><thead><tr><th><input id="poolSelectAll" class="pool-check" type="checkbox" aria-label="全选当前页可用 IP"></th><th>支行 / 网点</th><th>网段</th><th>IP 地址</th><th>状态</th><th>设备 / 分配信息</th><th>操作</th></tr></thead><tbody>', i, item, actions;
           for (i = 0; i < currentRows.length; i++) {
@@ -1456,19 +1675,24 @@
           }
           document.getElementById('table').innerHTML = currentRows.length ? h + '</tbody></table></div>' : empty('未找到符合条件的 IP', '完整 IP 查询支持所有地址状态。');
           document.getElementById('poolCount').innerHTML = '共 ' + r.total + ' 个地址'; localPager('poolPager', page, r.total, r.pageSize, load); bindRows(currentRows, page);
+          if (after) after();
         });
       }
       document.getElementById('batchOccupied').onclick = function () { var ids = selectedIds(); if (!ids.length) return; systemDialog('标记为已占用', '将当前页选中的 ' + ids.length + ' 个空闲 IP 标记为已占用，设备信息可后续补录。', '<div class="confirm-summary"><span>已选择 <b>' + ids.length + '</b> 个 IP</span><span>这些地址将不再参与审批分配。</span></div>', '确认标记', function () { return { ids: ids, state: 'OCCUPIED', reservationReason: '' }; }, function (root, body, button) { q('PUT', 'admin/ip-pool/status', body, function (r) { closeDialog(root); reloadMessage(function () { load(currentPage); }, '已将 ' + (r.updated || ids.length) + ' 个 IP 标记为已占用。', true); }, null, button, '标记中…'); }); };
       document.getElementById('clearPoolSelection').onclick = function () { var checks = document.querySelectorAll('#table tbody input.pool-check'), i; for (i = 0; i < checks.length; i++) checks[i].checked = false; updateSelected(); };
+      document.getElementById('openAssignmentImport').onclick = function () { assignmentImportDialog(function (done) { if (S.v === 'pool' && document.getElementById('poolSearch')) load(currentPage, done); }); };
       fillFilters();
       document.getElementById('poolBranch').onchange = function () { S.poolFilter.branchId = this.value; S.poolFilter.outletId = ''; fillFilters(); load(1); };
       document.getElementById('poolOutlet').onchange = function () { S.poolFilter.outletId = this.value; load(1); };
       document.getElementById('poolType').onchange = function () { S.poolFilter.rangeType = this.value; load(1); };
       document.getElementById('poolState').onchange = function () { S.poolFilter.state = this.value; load(1); };
+      document.getElementById('poolAssetType').onchange = function () { S.poolFilter.assetType = this.value; S.poolFilter.assetId = ''; fillFilters(); load(1); };
+      document.getElementById('poolAssetId').onchange = function () { S.poolFilter.assetId = this.value; load(1); };
       document.getElementById('poolQuery').onclick = function () { load(1); };
       document.getElementById('poolSearch').onkeydown = function (ev) { if ((ev || window.event).keyCode === 13) load(1); };
-      document.getElementById('poolReset').onclick = function () { S.poolFilter = { branchId: '', outletId: '', rangeType: '', state: '', q: '' }; document.getElementById('poolSearch').value = ''; fillFilters(); load(1); };
-      load(1);
+      document.getElementById('poolReset').onclick = function () { S.poolFilter = { branchId: '', outletId: '', rangeType: '', state: '', assetType: '', assetId: '', q: '' }; document.getElementById('poolSearch').value = ''; fillFilters(); load(1); };
+      load(S.poolFilter.page || 1);
+      });
     });
   }
 
@@ -1502,7 +1726,7 @@
       for(i=0;i<segments.length;i++)segRows+='<tr><td>'+e(rangeTypeText(segments[i].code))+'</td><td><input id="segmentName'+i+'" value="'+e(segments[i].name)+'"></td><td><input id="segmentOffset'+i+'" type="number" min="0" max="255" value="'+segments[i].relativeOffset+'"></td></tr>';
       for(i=0;i<assets.length;i++){var a=assets[i];assetRows+='<tr><td>'+e(a.assetType==='TECH'?'科技资产':'非科技资产')+'</td><td><b>'+e(a.name)+'</b></td><td>'+e(a.requiresUser===1?'关联':'不关联')+'</td><td>'+e(a.requiresResourceCode===1?'关联':'不关联')+'</td><td>'+e(rangeTypeText(a.recommendedRangeType))+'</td><td><span class="status status-'+(a.active===1?'approved':'rejected')+'">'+(a.active===1?'启用':'停用')+'</span></td><td><button data-asset-edit="'+i+'">编辑</button><button class="danger" data-asset-delete="'+i+'">删除</button></td></tr>';}
       document.getElementById('main').innerHTML=head('系统设置','地址规划与资产管理','地址规则影响后续生成；资产直接决定申请时需要填写的字段及推荐网段。')+
-        '<section class="card"><h3>默认地址规划</h3><div id="ruleNotice"></div><p class="hint">六类网段沿第三段按 256 个地址为单位偏移；不再要求规划块起点。网关固定为每段最后一个可用地址，生成前检查实际 IP 范围是否重叠。</p><div class="grid"><div><label>全局地址范围</label><input id="globalCidr" value="'+e(rule.globalCidr)+'" readonly></div><div><label for="defaultPrefix">默认单类网段前缀</label><input id="defaultPrefix" type="number" min="24" max="30" value="'+rule.segmentPrefix+'"></div><div><label>网关规则</label><input value="最后一个可用地址" readonly></div><div><label for="dnsPrimary">默认主 DNS</label><input id="dnsPrimary" value="'+e(rule.dnsPrimary)+'"></div><div><label for="dnsSecondary">备用 DNS</label><input id="dnsSecondary" value="'+e(rule.dnsSecondary||'')+'"></div></div><div class="table-scroll"><table><tr><th>六类网段</th><th>显示名称</th><th>第三段偏移</th></tr>'+segRows+'</table></div><label for="ruleReason">规则变更说明 <span class="required">*</span></label><textarea id="ruleReason" placeholder="请说明本次默认规则变更的原因"></textarea><button id="saveRule" class="primary">保存并启用新规则</button></section>'+
+        '<section class="card"><h3>默认地址规划</h3><div id="ruleNotice"></div><p class="hint">全局地址范围可按本行配置，必须覆盖全部已有网段。六类网段沿第三段按 256 个地址为单位偏移；不再要求规划块起点。网关固定为每段最后一个可用地址，生成前检查实际 IP 范围是否重叠。</p><div class="grid"><div><label>全局地址范围</label><input id="globalCidr" value="'+e(rule.globalCidr)+'"></div><div><label for="defaultPrefix">默认单类网段前缀</label><input id="defaultPrefix" type="number" min="24" max="30" value="'+rule.segmentPrefix+'"></div><div><label>网关规则</label><input value="最后一个可用地址" readonly></div><div><label for="dnsPrimary">默认主 DNS</label><input id="dnsPrimary" value="'+e(rule.dnsPrimary)+'"></div><div><label for="dnsSecondary">备用 DNS</label><input id="dnsSecondary" value="'+e(rule.dnsSecondary||'')+'"></div></div><div class="table-scroll"><table><tr><th>六类网段</th><th>显示名称</th><th>第三段偏移</th></tr>'+segRows+'</table></div><label for="ruleReason">规则变更说明 <span class="required">*</span></label><textarea id="ruleReason" placeholder="请说明本次默认规则变更的原因"></textarea><button id="saveRule" class="primary">保存并启用新规则</button></section>'+
         '<section class="card"><div class="card-title-row"><div><h3>资产管理</h3><p class="hint">每条资产只属于科技资产或非科技资产。关联开关决定申请表是否显示使用人和资源编码。</p></div><button id="addAsset" class="primary">新增资产</button></div><div id="assetNotice"></div><div class="table-scroll">'+(assetRows?'<table><tr><th>资产类型</th><th>资产名称</th><th>关联使用人</th><th>关联资源编码</th><th>推荐网段</th><th>状态</th><th>操作</th></tr>'+assetRows+'</table>':empty('暂无资产','请先新增资产，再由科技管理员提交申请。'))+'</div></section>';
       function reload(note,target){S.settingsFlash={text:note,target:target};settingsV4();}
       if(S.settingsFlash){msgAt(S.settingsFlash.target,S.settingsFlash.text,0);S.settingsFlash=null;}
@@ -1538,7 +1762,9 @@
   function exportsV3(){var base=[['branchName','支行'],['outletName','网点'],['rangeType','网段类型'],['cidr','CIDR'],['ipAddress','IP 地址'],['assignmentSource','分配来源'],['registeredBy','登记人'],['registeredAt','登记时间'],['responsibleTech','责任科技管理员'],['manualNote','补录说明'],['sourcePoolState','补录前状态'],['switchIp','交换机 IP'],['switchPort','端口号'],['macAddress','MAC 地址'],['serialNumber','序列号'],['assetType','资产类型'],['assetName','资产名称'],['resourceCode','资源编码'],['userName','使用人姓名'],['userUnifiedAuthId','使用人统一认证号'],['applicantUsername','申请科技管理员账号'],['applicantName','申请科技管理员姓名'],['applicationCreatedAt','申请时间'],['status','申请状态'],['recommendedRangeType','推荐网段'],['finalRangeType','最终网段'],['overrideReason','改选原因'],['reviewer','审批人'],['reviewedAt','审批时间'],['assignedAt','分配时间'],['releasedBy','释放人'],['releasedAt','释放时间'],['releaseReason','释放原因']],fields={POOL:[['state','当前状态']].concat(base),APPLICATION:base,ASSIGNMENT:base,RELEASE:[['ipAddress','IP 地址'],['resourceCode','资源编码'],['assignmentSource','分配来源'],['registeredBy','登记人'],['registeredAt','登记时间'],['responsibleTech','责任科技管理员'],['manualNote','补录说明'],['sourcePoolState','补录前状态'],['switchIp','交换机 IP'],['switchPort','端口号'],['macAddress','MAC 地址'],['serialNumber','序列号'],['releasedBy','释放人'],['releasedAt','释放时间'],['branchName','支行'],['outletName','网点'],['assetType','资产类型']],STATISTICS:[['branchName','支行'],['outletName','网点'],['availableCount','可用 IP'],['assignedCount','已分配 IP'],['occupiedCount','已占用 IP']]};document.getElementById('main').innerHTML=head('资源运营','数据导出','勾选需要的字段后导出；交换机信息、MAC 地址和序列号仅管理员可见，并支持当前/历史快照。')+'<section class="card"><div id="exportNotice"></div><div class="grid"><div><label for="exportType">数据类型</label><select id="exportType"><option value="POOL">IP 资源池</option><option value="APPLICATION">申请记录</option><option value="ASSIGNMENT">当前分配记录</option><option value="RELEASE">已释放记录</option><option value="STATISTICS">支行和网点资源统计</option></select></div><div><label for="exportFormat">文件格式</label><select id="exportFormat"><option value="CSV">CSV（UTF-8）</option><option value="XLSX">Excel（XLSX）</option></select></div></div><div class="export-fields"><b>选择导出字段</b><div id="exportFieldList"></div></div><button id="downloadExport" class="primary">下载导出文件</button></section>';function draw(){var a=fields[val('exportType')],h='',i;for(i=0;i<a.length;i++)h+='<label class="check"><input type="checkbox" value="'+a[i][0]+'" checked> '+e(a[i][1])+'</label>';document.getElementById('exportFieldList').innerHTML=h;}document.getElementById('exportType').onchange=draw;draw();document.getElementById('downloadExport').onclick=function(){var xs=document.getElementById('exportFieldList').getElementsByTagName('input'),out=[],i;for(i=0;i<xs.length;i++)if(xs[i].checked)out.push(xs[i].value);if(!out.length){msgAt('exportNotice','请至少选择一个导出字段。',1);return;}downloadExport(this,val('exportType'),val('exportFormat'),out);};}
 
   function rangesV4(){
+    var view = S.rangeView = {};
     q('GET','admin/outlets',null,function(result){
+      if (S.v !== 'ranges' || S.rangeView !== view) return;
       var outlets=result.items||[],branches={},i;
       for(i=0;i<outlets.length;i++)branches[outlets[i].branchId]=outlets[i].branchName;
       function branchOptions(){var h='<option value="">请选择支行</option>',id;for(id in branches)if(branches.hasOwnProperty(id))h+='<option value="'+id+'">'+e(branches[id])+'</option>';return h;}
@@ -1546,13 +1772,16 @@
       document.getElementById('main').innerHTML=head('基础资料','地址规划','六类网段按第三段偏移生成；仅按实际 IP 范围检查占用，不要求规划块起点。')+
         '<section class="card"><h3>生成网点六类地址段</h3><div id="planNotice"></div><p class="hint">生产网段决定六类网段前缀；网关为每段最后一个可用地址。预览会检查与现有网段的交叉占用。</p><div class="grid"><div><label for="planBranch">支行 <span class="required">*</span></label><select id="planBranch">'+branchOptions()+'</select></div><div><label for="planOutlet">网点 <span class="required">*</span></label><select id="planOutlet" disabled><option>请先选择支行</option></select></div><div><label for="planProduction">生产网段 <span class="required">*</span></label><input id="planProduction" placeholder="例如 108.56.32.0/27"></div></div><button id="planPreview" class="secondary">预览并检查占用</button><button id="planSave" class="primary">确认并生成</button><div id="planResult"></div></section>'+
         '<section class="card"><h3>批量生成六类地址段</h3><div id="batchNotice"></div><p class="hint">模板填写支行编码、网点编码和生产网段；预览检查整批与现有网段的占用，确认时再次校验并原子提交。</p><p><a href="/api/v1/admin/outlet-plan-template.xlsx">下载 Excel 模板</a>　<a href="/api/v1/admin/outlet-plan-template.csv">下载 CSV 模板</a></p><input id="planImportFile" type="file" accept=".xlsx,.csv"><button id="planImportPreview" class="secondary">上传并预览</button><div id="planImportResult"></div></section>'+
-        '<section class="card"><h3>现有地址段</h3><div id="rangeNotice"></div><div class="filter-layout"><div class="filter-fields"><div class="filter-field"><label for="rangeBranch">支行</label><select id="rangeBranch">'+branchOptions()+'</select></div><div class="filter-field"><label for="rangeOutlet">网点</label><select id="rangeOutlet"><option value="">请先选择支行</option></select></div><div class="filter-field"><label for="rangeType">网段类型</label><select id="rangeType"><option value="">全部</option><option value="PRODUCTION">生产</option><option value="NETWORK_MANAGEMENT">网络管理</option><option value="EXTENSION">扩展</option><option value="MONITORING">监控</option><option value="TEST">测试</option><option value="OFFICE">办公</option></select></div><div class="filter-field"><label for="rangeSearch">CIDR / 网关</label><input id="rangeSearch"></div></div><div class="filter-actions"><button id="rangeQuery" class="primary">查询</button></div></div><div id="table">加载中…</div></section>';
+        '<section class="card"><h3>现有地址段</h3><div id="rangeNotice"></div><div class="filter-layout"><div class="filter-fields"><div class="filter-field"><label for="rangeBranch">支行</label><select id="rangeBranch">'+branchOptions()+'</select></div><div class="filter-field"><label for="rangeOutlet">网点</label><select id="rangeOutlet"><option value="">请先选择支行</option></select></div><div class="filter-field"><label for="rangeType">网段类型</label><select id="rangeType"><option value="">全部</option><option value="PRODUCTION">生产</option><option value="NETWORK_MANAGEMENT">网络管理</option><option value="EXTENSION">扩展</option><option value="MONITORING">监控</option><option value="TEST">测试</option><option value="OFFICE">办公</option></select></div><div class="filter-field"><label for="rangeSearch">CIDR / 网关</label><input id="rangeSearch"></div></div><div class="filter-actions"><button id="rangeQuery" class="primary">查询</button><button id="rangeReset" class="secondary">重置筛选</button></div></div><label for="rangeSize">每页条数</label><select id="rangeSize" style="width:auto"><option>20</option><option>50</option><option>100</option></select><div id="table">加载中…</div><div id="rangePager" class="pager"></div></section>';
       function body(){return{branchId:Number(val('planBranch')),outletId:Number(val('planOutlet')),productionCidr:val('planProduction')};}
       function requestAt(target,method,path,data,ok,button,text){S.noticeTarget=target;q(method,path,data,function(x){S.noticeTarget='';ok(x);},function(){S.noticeTarget='';},button,text);}
-      function clearPreview(){document.getElementById('planResult').innerHTML='';document.getElementById('planSave').disabled=false;}
+      var previewRevision = 0;
+      function clearPreview(){previewRevision++;document.getElementById('planNotice').innerHTML='';document.getElementById('planResult').innerHTML='';document.getElementById('planSave').disabled=false;}
       function preview(){
         if(!val('planBranch')||!val('planOutlet')||!val('planProduction')){msgAt('planNotice','请先选择支行、网点并填写生产网段。',1);return;}
+        var revision = ++previewRevision;
         requestAt('planNotice','POST','admin/outlet-plans/preview',body(),function(x){
+          if (revision !== previewRevision || S.v !== 'ranges' || S.rangeView !== view) return;
           var h='<div class="confirm-summary">',j,c;
           for(j=0;j<x.segments.length;j++)h+='<span><b>'+e(rangeTypeText(x.segments[j].type))+'</b>'+e(x.segments[j].cidr)+'<br><small>网关 '+e(x.segments[j].gateway)+'</small></span>';
           h+='</div>';
@@ -1574,13 +1803,19 @@
       document.getElementById('planOutlet').onchange=clearPreview;
       document.getElementById('planProduction').oninput=clearPreview;
       document.getElementById('planPreview').onclick=preview;
-      document.getElementById('planSave').onclick=function(){if(!val('planBranch')||!val('planOutlet')||!val('planProduction')){msgAt('planNotice','请完成支行、网点和生产网段。',1);return;}requestAt('planNotice','POST','admin/outlet-plans',body(),function(){msgAt('planNotice','已生成该网点六类地址段和地址池。',0);clearPreview();loadRanges();},this,'生成中…');};
+      document.getElementById('planSave').onclick=function(){if(!val('planBranch')||!val('planOutlet')||!val('planProduction')){msgAt('planNotice','请完成支行、网点和生产网段。',1);return;}requestAt('planNotice','POST','admin/outlet-plans',body(),function(){clearPreview();msgAt('planNotice','已生成该网点六类地址段和地址池。',0);loadRanges();},this,'生成中…');};
+      var importFile = document.getElementById('planImportFile');
+      importFile.onchange = function () {
+        document.getElementById('planImportResult').innerHTML = '';
+        document.getElementById('batchNotice').innerHTML = '';
+      };
       document.getElementById('planImportPreview').onclick=function(){
         var file=document.getElementById('planImportFile').files[0],button=this;
         if(!file){msgAt('batchNotice','请选择 Excel 或 CSV 模板文件。',1);return;}
         S.noticeTarget='batchNotice';
         upload('admin/outlet-plan-import',file,function(x){
           S.noticeTarget='';
+          if (importFile !== document.getElementById('planImportFile') || file !== importFile.files[0]) return;
           var h='<p>共 '+x.totalRows+' 行，可导入 '+x.validRows+' 行，错误 '+x.errorRows+' 行。</p>',j,k;
           if(x.errors&&x.errors.length){h+='<div class="notice bad"><b>请先修正以下问题</b><div class="table-scroll"><table><tr><th>行号</th><th>问题与建议</th></tr>';for(j=0;j<x.errors.length;j++)h+='<tr><td>第 '+x.errors[j].rowNumber+' 行</td><td>'+e(x.errors[j].message)+'</td></tr>';h+='</table></div></div>';}
           for(j=0;j<x.previews.length;j++){h+='<details><summary>第 '+x.previews[j].rowNumber+' 行：'+e(x.previews[j].branchCode)+' / '+e(x.previews[j].outletCode)+' / '+e(x.previews[j].productionCidr)+'</summary><div class="confirm-summary">';for(k=0;k<x.previews[j].segments.length;k++)h+='<span>'+e(rangeTypeText(x.previews[j].segments[k].type))+'<b>'+e(x.previews[j].segments[k].cidr)+'</b></span>';h+='</div></details>';}
@@ -1590,14 +1825,52 @@
           if(x.status==='PREVIEW_READY')document.getElementById('planImportConfirm').onclick=function(){requestAt('batchNotice','POST','admin/outlet-plan-import/'+x.id+'/confirm',{},function(){msgAt('batchNotice','批量六类地址段已生成。',0);loadRanges();},this,'生成中…');};
         },function(){S.noticeTarget='';},button);
       };
-      var all=[];
-      function draw(){var branch=val('rangeBranch'),outlet=val('rangeOutlet'),type=val('rangeType'),word=val('rangeSearch').toLowerCase(),h='<table><tr><th>支行 / 网点</th><th>网段类型</th><th>CIDR</th><th>网关</th><th>配置状态</th></tr>',j,x,count=0;for(j=0;j<all.length;j++){x=all[j];if(branch&&String(x.branchId)!==String(branch))continue;if(outlet&&String(x.outletId)!==String(outlet))continue;if(type&&x.rangeType!==type)continue;if(word&&String(x.cidr+' '+x.gateway).toLowerCase().indexOf(word)<0)continue;count++;h+='<tr><td>'+e(x.branchName)+'<br><small>'+e(x.outletName||'—')+'</small></td><td>'+e(rangeTypeText(x.rangeType))+'</td><td><b>'+e(x.cidr)+'</b></td><td>'+e(x.gateway)+'</td><td>已纳入六段规划</td></tr>';}document.getElementById('table').innerHTML=count?h+'</table>':empty('未找到符合条件的地址段','请调整支行、网点、网段类型或 CIDR 条件。');}
-      function loadRanges(){S.noticeTarget='rangeNotice';q('GET','admin/ip-ranges',null,function(x){S.noticeTarget='';all=x.items||[];draw();},function(){S.noticeTarget='';});}
-      document.getElementById('rangeBranch').onchange=function(){document.getElementById('rangeOutlet').innerHTML=outletOptions(this.value,true);draw();};
-      document.getElementById('rangeOutlet').onchange=draw;
-      document.getElementById('rangeType').onchange=draw;
-      document.getElementById('rangeQuery').onclick=draw;
-      loadRanges();
+      var state = S.rangeFilter || {branch:'', outlet:'', type:'', keyword:'', page:1, size:20};
+      S.rangeFilter = state;
+      var sequence = 0;
+      var branchField = document.getElementById('rangeBranch'), outletField = document.getElementById('rangeOutlet');
+      var typeField = document.getElementById('rangeType'), searchField = document.getElementById('rangeSearch');
+      var sizeField = document.getElementById('rangeSize'), table = document.getElementById('table');
+      branchField.options[0].text = '全部支行';
+      branchField.value = state.branch; typeField.value = state.type;
+      searchField.value = state.keyword; sizeField.value = String(state.size);
+      function fillOutlets() {
+        outletField.innerHTML = outletOptions(branchField.value,true);
+        outletField.disabled = !branchField.value;
+        outletField.value = state.outlet;
+      }
+      function search() {
+        state.branch = val('rangeBranch'); state.outlet = val('rangeOutlet');
+        state.type = val('rangeType'); state.keyword = val('rangeSearch'); state.size = Number(sizeField.value);
+        loadRanges(1);
+      }
+      function loadRanges(page) {
+        var token = ++sequence;
+        state.page = page || state.page;
+        var url = 'admin/ip-ranges?page=' + state.page + '&pageSize=' + state.size + '&branchId=' + encodeURIComponent(state.branch) +
+          '&outletId=' + encodeURIComponent(state.outlet) + '&rangeType=' + encodeURIComponent(state.type) + '&q=' + encodeURIComponent(state.keyword);
+        table.innerHTML = '加载中…';
+        document.getElementById('rangePager').innerHTML = '';
+        q('GET',url,null,function (r) {
+          if (token !== sequence || table !== document.getElementById('table')) return;
+          state.page = r.page;
+          var html = '<div class="table-scroll"><table><thead><tr><th>支行 / 网点</th><th>网段类型</th><th>CIDR</th><th>网关</th><th>配置状态</th></tr></thead><tbody>';
+          r.items.forEach(function (row) {
+            html += '<tr><td>'+e(row.branchName)+'<br><small>'+e(row.outletName || '—')+'</small></td><td>'+e(row.rangeType ? rangeTypeText(row.rangeType) : '旧地址段')+
+              '</td><td><b>'+e(row.cidr)+'</b></td><td>'+e(row.gateway)+'</td><td>'+(row.rangeType ? '已纳入六段规划' : '待核对规划')+'</td></tr>';
+          });
+          table.innerHTML = r.total ? html + '</tbody></table></div>' : empty('未找到地址段','请检查筛选条件，或先在上方生成地址段。');
+          localPager('rangePager',r.page,r.total,r.pageSize,loadRanges);
+        });
+      }
+      branchField.onchange = function () { state.outlet = ''; fillOutlets(); search(); };
+      outletField.onchange = typeField.onchange = sizeField.onchange = search;
+      searchField.onkeydown = function (event) { if (event.keyCode === 13) search(); };
+      document.getElementById('rangeQuery').onclick = search;
+      document.getElementById('rangeReset').onclick = function () {
+        branchField.value = typeField.value = searchField.value = state.outlet = ''; fillOutlets(); search();
+      };
+      fillOutlets(); loadRanges();
     });
   }
 
